@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -28,12 +27,9 @@ export class AuthController {
   @UseGuards(JwtRefreshGuard)
   async refreshTokens(
     @CurrentUser('userId') userId: string,
-    @Body() refreshTokenDto: RefreshTokenDto,
+    @CurrentUser('refreshToken') refreshToken: string,
   ) {
-    return this.authService.refreshTokens(
-      userId,
-      refreshTokenDto.refreshToken,
-    );
+    return this.authService.refreshTokens(userId, refreshToken);
   }
 
   @Post('logout')
