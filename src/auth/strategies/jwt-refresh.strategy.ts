@@ -16,7 +16,7 @@ export class JwtRefreshStrategy extends PassportStrategy(
 ) {
   constructor(private configService: ConfigService) {
     super({
-      jwtFromRequest: ExtractJwt.fromBodyField('refreshToken'),
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: configService.get<string>('JWT_REFRESH_SECRET') || 'default-refresh-secret',
       passReqToCallback: true,
@@ -24,7 +24,7 @@ export class JwtRefreshStrategy extends PassportStrategy(
   }
 
   async validate(req: Request, payload: JwtRefreshPayload) {
-    const refreshToken = req.body.refreshToken;
+    const refreshToken = req.get('Authorization')?.replace('Bearer ', '').trim();
 
     if (!refreshToken) {
       throw new UnauthorizedException('Refresh token not found');
