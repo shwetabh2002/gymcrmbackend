@@ -26,11 +26,13 @@ async function bootstrap() {
   logger.log('✅ Global validation pipes enabled');
 
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  const host = '0.0.0.0'; // Bind to all network interfaces for Render/Docker
+  await app.listen(port, host);
 
   logger.log('');
   logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   logger.log(`🎯 Application is running on: http://localhost:${port}`);
+  logger.log(`🌐 Listening on: ${host}:${port}`);
   logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   logger.log('');
   logger.log('📋 Available Endpoints:');
