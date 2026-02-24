@@ -1,12 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 
 async function bootstrap() {
+  const logger = new Logger('Bootstrap');
+
+  logger.log('🚀 Starting Backend GYM application...');
+  logger.log(`📦 Node Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.log(`🔢 Node Version: ${process.version}`);
+
   const app = await NestFactory.create(AppModule);
 
   // Enable CORS
   app.enableCors();
+  logger.log('🌐 CORS enabled');
 
   // Enable global validation pipes
   app.useGlobalPipes(
@@ -16,10 +23,26 @@ async function bootstrap() {
       transform: true,
     }),
   );
+  logger.log('✅ Global validation pipes enabled');
 
   const port = process.env.PORT || 3000;
   await app.listen(port);
 
-  console.log(`Application is running on: http://localhost:${port}`);
+  logger.log('');
+  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  logger.log(`🎯 Application is running on: http://localhost:${port}`);
+  logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  logger.log('');
+  logger.log('📋 Available Endpoints:');
+  logger.log(`   POST   http://localhost:${port}/auth/admin/login`);
+  logger.log(`   POST   http://localhost:${port}/auth/refresh`);
+  logger.log(`   POST   http://localhost:${port}/auth/logout`);
+  logger.log('');
 }
-bootstrap();
+
+bootstrap().catch((error) => {
+  const logger = new Logger('Bootstrap');
+  logger.error('❌ Failed to start application:', error.message);
+  logger.error(error.stack);
+  process.exit(1);
+});

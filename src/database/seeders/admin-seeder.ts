@@ -1,14 +1,14 @@
-import { DataSource } from 'typeorm';
+import { model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
-import { User } from '../../users/entities/user.entity';
+import { User, UserSchema } from '../../users/schemas/user.schema';
 import { Role } from '../../common/enums/role.enum';
 
-export async function seedAdminUser(dataSource: DataSource) {
-  const userRepository = dataSource.getRepository(User);
+export async function seedAdminUser() {
+  const UserModel = model<User>('User', UserSchema);
 
   // Check if admin already exists
-  const existingAdmin = await userRepository.findOne({
-    where: { email: 'admin@backendgym.com' },
+  const existingAdmin = await UserModel.findOne({
+    email: 'admin@backendgym.com',
   });
 
   if (existingAdmin) {
@@ -19,7 +19,7 @@ export async function seedAdminUser(dataSource: DataSource) {
   // Create admin user
   const hashedPassword = await bcrypt.hash('Admin@123', 10);
 
-  const admin = userRepository.create({
+  const admin = new UserModel({
     email: 'admin@backendgym.com',
     password: hashedPassword,
     name: 'Admin User',
@@ -27,7 +27,7 @@ export async function seedAdminUser(dataSource: DataSource) {
     isActive: true,
   });
 
-  await userRepository.save(admin);
+  await admin.save();
 
   console.log('Admin user created successfully');
   console.log('Email: admin@backendgym.com');

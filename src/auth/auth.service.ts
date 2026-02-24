@@ -47,11 +47,11 @@ export class AuthService {
 
     // Hash and store refresh token
     const hashedRefreshToken = await bcrypt.hash(tokens.refreshToken, 10);
-    await this.usersService.updateRefreshToken(user.id, hashedRefreshToken);
+    await this.usersService.updateRefreshToken(user._id.toString(), hashedRefreshToken);
 
     return {
       user: {
-        userId: user.id,
+        userId: user._id.toString(),
         email: user.email,
         name: user.name,
         role: user.role,
@@ -80,7 +80,7 @@ export class AuthService {
 
     // Hash and store new refresh token
     const hashedRefreshToken = await bcrypt.hash(tokens.refreshToken, 10);
-    await this.usersService.updateRefreshToken(user.id, hashedRefreshToken);
+    await this.usersService.updateRefreshToken(user._id.toString(), hashedRefreshToken);
 
     return tokens;
   }
@@ -91,8 +91,9 @@ export class AuthService {
   }
 
   private async generateTokens(user: any) {
+    const userId = user._id ? user._id.toString() : user.id;
     const payload = {
-      sub: user.id,
+      sub: userId,
       email: user.email,
       role: user.role,
       name: user.name,
@@ -104,7 +105,7 @@ export class AuthService {
         expiresIn: this.configService.get('JWT_ACCESS_EXPIRATION'),
       }),
       this.jwtService.signAsync(
-        { sub: user.id, email: user.email },
+        { sub: userId, email: user.email },
         {
           secret: this.configService.get('JWT_REFRESH_SECRET'),
           expiresIn: this.configService.get('JWT_REFRESH_EXPIRATION'),

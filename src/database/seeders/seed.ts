@@ -1,32 +1,24 @@
-import { DataSource } from 'typeorm';
+import { connect, connection } from 'mongoose';
 import { config } from 'dotenv';
 import { seedAdminUser } from './admin-seeder';
 
 // Load environment variables
 config();
 
-const AppDataSource = new DataSource({
-  type: 'postgres',
-  host: process.env.DATABASE_HOST,
-  port: parseInt(process.env.DATABASE_PORT || '5432'),
-  username: process.env.DATABASE_USER,
-  password: process.env.DATABASE_PASSWORD,
-  database: process.env.DATABASE_NAME,
-  entities: [__dirname + '/../../**/*.entity{.ts,.js}'],
-  synchronize: false,
-});
-
 async function runSeeders() {
   try {
-    await AppDataSource.initialize();
-    console.log('Data Source has been initialized!');
+    // Connect to MongoDB
+    await connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/backendgym');
+    console.log('MongoDB connection established!');
 
-    await seedAdminUser(AppDataSource);
+    await seedAdminUser();
 
     console.log('Seeding completed successfully');
+    await connection.close();
     process.exit(0);
   } catch (error) {
     console.error('Error during seeding:', error);
+    await connection.close();
     process.exit(1);
   }
 }
