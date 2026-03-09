@@ -5,6 +5,9 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { SubscriptionPlansModule } from './subscription-plans/subscription-plans.module';
+import { MembersModule } from './members/members.module';
+import { MemberSubscriptionsModule } from './member-subscriptions/member-subscriptions.module';
 
 @Module({
   imports: [
@@ -58,6 +61,9 @@ import { UsersModule } from './users/users.module';
     }),
     AuthModule,
     UsersModule,
+    SubscriptionPlansModule,
+    MembersModule,
+    MemberSubscriptionsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

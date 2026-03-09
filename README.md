@@ -23,16 +23,47 @@
 
 ## Description
 
-Backend GYM - A NestJS backend application for practicing backend development concepts.
+Backend GYM - A comprehensive Gym Management System built with NestJS, featuring member management, subscription plans, payment tracking, and automated invoice generation.
 
 ## Tech Stack
 
 - **Framework**: NestJS
 - **Language**: TypeScript
-- **Database**: PostgreSQL (with TypeORM)
-- **Authentication**: JWT with Passport
+- **Database**: MongoDB (with Mongoose)
+- **Authentication**: JWT with Passport (Access & Refresh Tokens)
 - **Validation**: class-validator & class-transformer
 - **Configuration**: @nestjs/config (dotenv)
+
+## Features
+
+- **Authentication & Authorization**: JWT-based auth with role-based access control (RBAC)
+- **Subscription Plans Management**: Create and manage flexible subscription plans (days/months/years)
+- **Member Management**: Track gym members with status and subscription details
+- **Payment Tracking**: Support for partial payments with multiple payment modes
+- **Invoice Generation**: Automated invoice creation with unique numbering (GYM-YYYY-NNN)
+- **Dashboard Analytics**: Revenue tracking, member statistics, and payment insights
+
+## API Documentation
+
+Comprehensive API documentation is available in [API_DOCS.md](./API_DOCS.md).
+
+### Quick API Reference
+
+**Base URL**: `http://localhost:3000`
+
+#### Authentication
+- `POST /auth/admin/login` - Admin login
+- `POST /auth/refresh` - Refresh access token
+- `POST /auth/logout` - Logout
+
+#### Subscription Plans
+- `POST /subscription-plans` - Create plan
+- `GET /subscription-plans` - List all plans
+- `GET /subscription-plans/:id` - Get plan by ID
+- `PUT /subscription-plans/:id` - Update plan
+- `DELETE /subscription-plans/:id` - Delete plan
+
+All subscription plan endpoints require JWT authentication.
 
 ## Project setup
 
@@ -53,17 +84,27 @@ Create a `.env` file in the root directory with the following variables:
 PORT=3000
 NODE_ENV=development
 
-# Database
-DATABASE_HOST=localhost
-DATABASE_PORT=5432
-DATABASE_USER=postgres
-DATABASE_PASSWORD=your_password
-DATABASE_NAME=backendgym
+# MongoDB
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/backendgym
 
 # JWT
-JWT_SECRET=your-secret-key
-JWT_EXPIRATION=1d
+JWT_ACCESS_SECRET=your-access-secret-key
+JWT_REFRESH_SECRET=your-refresh-secret-key
+JWT_ACCESS_EXPIRATION=7d
+JWT_REFRESH_EXPIRATION=365d
 ```
+
+## Database Seeding
+
+Seed the database with an admin user:
+
+```bash
+$ npm run seed
+```
+
+**Default Admin Credentials:**
+- Email: `admin@backendgym.com`
+- Password: `Admin@123`
 
 ## Compile and run the project
 

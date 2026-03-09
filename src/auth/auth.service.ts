@@ -30,10 +30,6 @@ export class AuthService {
       throw new UnauthorizedException('Access denied. Admin privileges required');
     }
 
-    if (!user.isActive) {
-      throw new UnauthorizedException('Account is inactive');
-    }
-
     const isPasswordValid = await bcrypt.compare(
       loginDto.password,
       user.password,
