@@ -2,6 +2,7 @@ import { model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { User, UserSchema } from '../../users/schemas/user.schema';
 import { Role } from '../../common/enums/role.enum';
+import { UserType } from '../../common/enums/user-type.enum';
 
 export async function seedAdminUser() {
   const UserModel = model<User>('User', UserSchema);
@@ -24,7 +25,7 @@ export async function seedAdminUser() {
     password: hashedPassword,
     name: 'Admin User',
     role: Role.ADMIN,
-    isActive: true,
+    userType: UserType.ADMIN,
   });
 
   await admin.save();
