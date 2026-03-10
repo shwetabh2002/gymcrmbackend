@@ -8,6 +8,9 @@ import { UsersModule } from './users/users.module';
 import { SubscriptionPlansModule } from './subscription-plans/subscription-plans.module';
 import { MembersModule } from './members/members.module';
 import { MemberSubscriptionsModule } from './member-subscriptions/member-subscriptions.module';
+import { PaymentsModule } from './payments/payments.module';
+import { InvoicesModule } from './invoices/invoices.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 
 @Module({
   imports: [
@@ -64,6 +67,9 @@ import { MemberSubscriptionsModule } from './member-subscriptions/member-subscri
     SubscriptionPlansModule,
     MembersModule,
     MemberSubscriptionsModule,
+    PaymentsModule,
+    InvoicesModule,
+    AnalyticsModule,
   ],
   controllers: [AppController],
   providers: [AppService],
