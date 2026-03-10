@@ -6,9 +6,6 @@ export type PaymentDocument = Payment & Document;
 
 @Schema({ timestamps: true })
 export class Payment {
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
-  memberId: MongooseSchema.Types.ObjectId;
-
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'MemberSubscription',
@@ -16,23 +13,38 @@ export class Payment {
   })
   subscriptionId: MongooseSchema.Types.ObjectId;
 
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  })
+  memberId: MongooseSchema.Types.ObjectId;
+
   @Prop({ required: true })
   amount: number;
 
-  @Prop({ type: String, enum: PaymentMode, required: true })
+  @Prop({
+    type: String,
+    enum: PaymentMode,
+    required: true,
+  })
   paymentMode: PaymentMode;
-
-  @Prop({ type: String, default: null })
-  transactionRef: string | null;
 
   @Prop({ required: true, type: Date })
   paymentDate: Date;
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Invoice', default: null })
-  invoiceId: MongooseSchema.Types.ObjectId | null;
+  @Prop({ default: null })
+  transactionId: string;
 
-  @Prop({ type: String, default: null })
-  notes: string | null;
+  @Prop({ default: null })
+  notes: string;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  })
+  receivedBy: MongooseSchema.Types.ObjectId; // Admin/Manager who recorded the payment
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);

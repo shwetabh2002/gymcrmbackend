@@ -3,12 +3,21 @@ import { Document, Schema as MongooseSchema } from 'mongoose';
 
 export type InvoiceDocument = Invoice & Document;
 
+export interface InvoiceItem {
+  description: string;
+  amount: number;
+}
+
 @Schema({ timestamps: true })
 export class Invoice {
   @Prop({ required: true, unique: true })
-  invoiceNumber: string; // Format: GYM-YYYY-NNN
+  invoiceNumber: string;
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  })
   memberId: MongooseSchema.Types.ObjectId;
 
   @Prop({
@@ -18,17 +27,51 @@ export class Invoice {
   })
   subscriptionId: MongooseSchema.Types.ObjectId;
 
-  @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'Payment', required: true })
-  paymentId: MongooseSchema.Types.ObjectId;
+  @Prop({
+    type: [
+      {
+        description: { type: String, required: true },
+        amount: { type: Number, required: true },
+      },
+    ],
+    required: true,
+  })
+  items: InvoiceItem[];
 
   @Prop({ required: true })
-  amount: number;
+  subtotal: number;
+
+  @Prop({ default: 0 })
+  taxPercentage: number;
+
+  @Prop({ default: 0 })
+  taxAmount: number;
+
+  @Prop({ required: true })
+  totalAmount: number;
 
   @Prop({ required: true, type: Date })
-  date: Date;
+  invoiceDate: Date;
 
-  @Prop({ type: String, default: null })
-  pdfUrl: string | null; // Path or URL to generated PDF
+  @Prop({ type: Date, default: null })
+  dueDate: Date;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Payment',
+    default: null,
+  })
+  paymentId: MongooseSchema.Types.ObjectId;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+  })
+  generatedBy: MongooseSchema.Types.ObjectId;
+
+  @Prop({ default: null })
+  notes: string;
 }
 
 export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
