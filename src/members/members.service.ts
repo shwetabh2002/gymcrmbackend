@@ -38,6 +38,11 @@ export class MembersService {
     return this.userModel
       .find({ userType: UserType.MEMBER })
       .select('-password -refreshToken')
+      .populate({
+        path: 'currentSubscriptionId',
+        strictPopulate: false,
+        populate: { path: 'planId', strictPopulate: false },
+      })
       .exec();
   }
 
@@ -45,6 +50,11 @@ export class MembersService {
     const member = await this.userModel
       .findOne({ _id: id, userType: UserType.MEMBER })
       .select('-password -refreshToken')
+      .populate({
+        path: 'currentSubscriptionId',
+        strictPopulate: false,
+        populate: { path: 'planId', strictPopulate: false },
+      })
       .exec();
 
     if (!member) {
@@ -73,6 +83,11 @@ export class MembersService {
         { new: true },
       )
       .select('-password -refreshToken')
+      .populate({
+        path: 'currentSubscriptionId',
+        strictPopulate: false,
+        populate: { path: 'planId', strictPopulate: false },
+      })
       .exec();
 
     if (!member) {
