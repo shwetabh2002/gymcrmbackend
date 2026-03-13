@@ -417,13 +417,13 @@ curl -X POST http://localhost:3000/members \
 ---
 
 ### 2. Get All Members
-Retrieve all gym members.
+Retrieve all gym members. When a member has an active subscription assigned, the `currentSubscriptionId` is populated with subscription details (including plan). When no subscription is assigned, it remains `null`.
 
 **Endpoint:** `GET /members`
 
 **Authentication:** Required (JWT)
 
-**Response (200 OK):**
+**Response (200 OK) - Member without subscription:**
 ```json
 [
   {
@@ -444,6 +444,45 @@ Retrieve all gym members.
 ]
 ```
 
+**Response (200 OK) - Member with subscription assigned:**
+```json
+[
+  {
+    "_id": "69adcc16c8030c338569d895",
+    "email": "john.doe@example.com",
+    "name": "John Doe",
+    "role": "USER",
+    "userType": "MEMBER",
+    "phone": "+1234567890",
+    "address": "123 Main St, New York, NY 10001",
+    "emergencyContact": "+1987654321",
+    "memberStatus": "ACTIVE",
+    "currentSubscriptionId": {
+      "_id": "69af0ba6bae02de0e9664dc9",
+      "planId": {
+        "_id": "69af0b9abae02de0e9664dc3",
+        "name": "Monthly Membership",
+        "duration": 1,
+        "durationType": "MONTHS",
+        "price": 1000,
+        "description": "Standard monthly gym membership",
+        "status": "ACTIVE"
+      },
+      "startDate": "2026-03-09T00:00:00.000Z",
+      "expiryDate": "2026-04-09T00:00:00.000Z",
+      "subscriptionStatus": "ACTIVE",
+      "planPrice": 1000,
+      "totalPaid": 500,
+      "pendingAmount": 500,
+      "paymentStatus": "PARTIALLY_PAID"
+    },
+    "createdAt": "2026-03-08T19:20:54.395Z",
+    "updatedAt": "2026-03-08T19:20:54.395Z",
+    "__v": 0
+  }
+]
+```
+
 **cURL Example:**
 ```bash
 curl -X GET http://localhost:3000/members \
@@ -453,7 +492,7 @@ curl -X GET http://localhost:3000/members \
 ---
 
 ### 3. Get Member By ID
-Retrieve a specific member by their ID.
+Retrieve a specific member by their ID. When the member has an assigned subscription/plan, the response includes populated subscription and plan details. When no subscription is assigned, `currentSubscriptionId` is `null`.
 
 **Endpoint:** `GET /members/:id`
 
@@ -462,7 +501,7 @@ Retrieve a specific member by their ID.
 **Path Parameters:**
 - `id` (string, required): MongoDB ObjectId of the member
 
-**Response (200 OK):**
+**Response (200 OK) - Without subscription:**
 ```json
 {
   "_id": "69adcc16c8030c338569d895",
@@ -475,6 +514,43 @@ Retrieve a specific member by their ID.
   "emergencyContact": "+1987654321",
   "memberStatus": "ACTIVE",
   "currentSubscriptionId": null,
+  "createdAt": "2026-03-08T19:20:54.395Z",
+  "updatedAt": "2026-03-08T19:20:54.395Z",
+  "__v": 0
+}
+```
+
+**Response (200 OK) - With assigned subscription:**
+```json
+{
+  "_id": "69adcc16c8030c338569d895",
+  "email": "john.doe@example.com",
+  "name": "John Doe",
+  "role": "USER",
+  "userType": "MEMBER",
+  "phone": "+1234567890",
+  "address": "123 Main St, New York, NY 10001",
+  "emergencyContact": "+1987654321",
+  "memberStatus": "ACTIVE",
+  "currentSubscriptionId": {
+    "_id": "69af0ba6bae02de0e9664dc9",
+    "planId": {
+      "_id": "69af0b9abae02de0e9664dc3",
+      "name": "Monthly Membership",
+      "duration": 1,
+      "durationType": "MONTHS",
+      "price": 1000,
+      "description": "Standard monthly gym membership",
+      "status": "ACTIVE"
+    },
+    "startDate": "2026-03-09T00:00:00.000Z",
+    "expiryDate": "2026-04-09T00:00:00.000Z",
+    "subscriptionStatus": "ACTIVE",
+    "planPrice": 1000,
+    "totalPaid": 500,
+    "pendingAmount": 500,
+    "paymentStatus": "PARTIALLY_PAID"
+  },
   "createdAt": "2026-03-08T19:20:54.395Z",
   "updatedAt": "2026-03-08T19:20:54.395Z",
   "__v": 0
@@ -499,7 +575,7 @@ curl -X GET http://localhost:3000/members/69adcc16c8030c338569d895 \
 ---
 
 ### 4. Update Member
-Update an existing member's information.
+Update an existing member's information. When the member has an assigned subscription, the response includes populated subscription and plan details; otherwise `currentSubscriptionId` is `null`.
 
 **Endpoint:** `PUT /members/:id`
 
