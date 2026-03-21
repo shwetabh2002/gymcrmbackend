@@ -7,6 +7,10 @@ import {
   MemberSubscriptionDocument,
 } from '../member-subscriptions/schemas/member-subscription.schema';
 import { Payment, PaymentDocument } from '../payments/schemas/payment.schema';
+import {
+  MemberPayment,
+  MemberPaymentDocument,
+} from '../members/schemas/member-payment.schema';
 import { UserType } from '../common/enums/user-type.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PaymentStatus } from '../common/enums/payment-status.enum';
@@ -18,6 +22,8 @@ export class AnalyticsService {
     @InjectModel(MemberSubscription.name)
     private memberSubscriptionModel: Model<MemberSubscriptionDocument>,
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
+    @InjectModel(MemberPayment.name)
+    private memberPaymentModel: Model<MemberPaymentDocument>,
   ) {}
 
   /**
@@ -37,13 +43,14 @@ export class AnalyticsService {
       .countDocuments({ userType: UserType.MEMBER })
       .exec();
 
-    // Active subscriptions count
+    // Active subscriptions count (detailed flow only)
     const activeSubscriptionsCount = await this.memberSubscriptionModel
       .countDocuments({ subscriptionStatus: SubscriptionStatus.ACTIVE })
       .exec();
 
-    // Total revenue collected
-    const revenueResult = await this.paymentModel.aggregate([
+    // Total revenue collected from BOTH flows
+    // Detailed flow: Payment model
+    const revenueResultDetailed = await this.paymentModel.aggregate([
       {
         $group: {
           _id: null,
@@ -51,10 +58,24 @@ export class AnalyticsService {
         },
       },
     ]);
-    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+    const totalRevenueDetailed = revenueResultDetailed[0]?.totalRevenue || 0;
 
-    // Monthly revenue (current month)
-    const monthlyRevenueResult = await this.paymentModel.aggregate([
+    // Simplified flow: MemberPayment model (use 'received' field)
+    const revenueResultSimplified = await this.memberPaymentModel.aggregate([
+      {
+        $group: {
+          _id: null,
+          totalRevenue: { $sum: '$received' },
+        },
+      },
+    ]);
+    const totalRevenueSimplified = revenueResultSimplified[0]?.totalRevenue || 0;
+
+    const totalRevenue = totalRevenueDetailed + totalRevenueSimplified;
+
+    // Monthly revenue (current month) from BOTH flows
+    // Detailed flow
+    const monthlyRevenueDetailedResult = await this.paymentModel.aggregate([
       {
         $match: {
           paymentDate: { $gte: startOfMonth },
@@ -67,23 +88,62 @@ export class AnalyticsService {
         },
       },
     ]);
-    const monthlyRevenue = monthlyRevenueResult[0]?.monthlyRevenue || 0;
+    const monthlyRevenueDetailed =
+      monthlyRevenueDetailedResult[0]?.monthlyRevenue || 0;
 
-    // Pending amount (all subscriptions)
-    const pendingAmountResult = await this.memberSubscriptionModel.aggregate([
-      {
-        $match: {
-          subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+    // Simplified flow
+    const monthlyRevenueSimplifiedResult =
+      await this.memberPaymentModel.aggregate([
+        {
+          $match: {
+            paymentDate: { $gte: startOfMonth },
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          totalPending: { $sum: '$pendingAmount' },
+        {
+          $group: {
+            _id: null,
+            monthlyRevenue: { $sum: '$received' },
+          },
         },
-      },
-    ]);
-    const totalPendingAmount = pendingAmountResult[0]?.totalPending || 0;
+      ]);
+    const monthlyRevenueSimplified =
+      monthlyRevenueSimplifiedResult[0]?.monthlyRevenue || 0;
+
+    const monthlyRevenue = monthlyRevenueDetailed + monthlyRevenueSimplified;
+
+    // Pending amount from BOTH flows
+    // Detailed flow: from subscriptions
+    const pendingAmountDetailedResult =
+      await this.memberSubscriptionModel.aggregate([
+        {
+          $match: {
+            subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalPending: { $sum: '$pendingAmount' },
+          },
+        },
+      ]);
+    const totalPendingDetailed =
+      pendingAmountDetailedResult[0]?.totalPending || 0;
+
+    // Simplified flow: from MemberPayments
+    const pendingAmountSimplifiedResult =
+      await this.memberPaymentModel.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalPending: { $sum: '$pending' },
+          },
+        },
+      ]);
+    const totalPendingSimplified =
+      pendingAmountSimplifiedResult[0]?.totalPending || 0;
+
+    const totalPendingAmount = totalPendingDetailed + totalPendingSimplified;
 
     // ===== DETAILED LISTS =====
 
@@ -140,8 +200,9 @@ export class AnalyticsService {
       .limit(10)
       .exec();
 
-    // Recent payments (last 10)
-    const recentPayments = await this.paymentModel
+    // Recent payments from BOTH flows (last 10 combined)
+    // Detailed flow payments
+    const recentPaymentsDetailed = await this.paymentModel
       .find()
       .populate('memberId', 'name email')
       .populate('subscriptionId', 'planId')
@@ -149,6 +210,44 @@ export class AnalyticsService {
       .sort({ paymentDate: -1, createdAt: -1 })
       .limit(10)
       .exec();
+
+    // Simplified flow payments
+    const recentPaymentsSimplified = await this.memberPaymentModel
+      .find()
+      .populate('memberId', 'name email')
+      .select('memberId amount received mop paymentDate transactionId')
+      .sort({ paymentDate: -1, createdAt: -1 })
+      .limit(10)
+      .exec();
+
+    // Combine and sort both payment types
+    const allRecentPayments = [
+      ...recentPaymentsDetailed.map((p: any) => ({
+        memberName: p.memberId?.name || 'Unknown',
+        email: p.memberId?.email || '',
+        amount: p.amount,
+        paymentMode: p.paymentMode,
+        paymentDate: p.paymentDate,
+        transactionId: p.transactionId,
+        flow: 'detailed',
+      })),
+      ...recentPaymentsSimplified.map((p: any) => ({
+        memberName: p.memberId?.name || 'Unknown',
+        email: p.memberId?.email || '',
+        amount: p.received,
+        paymentMode: p.mop,
+        paymentDate: p.paymentDate,
+        transactionId: p.transactionId,
+        flow: 'simplified',
+      })),
+    ]
+      .sort((a, b) => {
+        return (
+          new Date(b.paymentDate).getTime() -
+          new Date(a.paymentDate).getTime()
+        );
+      })
+      .slice(0, 10);
 
     // New members (joined in last 30 days)
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -203,14 +302,7 @@ export class AnalyticsService {
         }),
       ),
 
-      recentPayments: recentPayments.map((payment: any) => ({
-        memberName: payment.memberId?.name || 'Unknown',
-        email: payment.memberId?.email || '',
-        amount: payment.amount,
-        paymentMode: payment.paymentMode,
-        paymentDate: payment.paymentDate,
-        transactionId: payment.transactionId,
-      })),
+      recentPayments: allRecentPayments,
 
       newMembers: newMembers.map((member: any) => ({
         name: member.name,
@@ -260,7 +352,7 @@ export class AnalyticsService {
   }
 
   /**
-   * Get revenue analytics
+   * Get revenue analytics (BOTH flows combined)
    */
   async getRevenueAnalytics() {
     const now = new Date();
@@ -268,8 +360,9 @@ export class AnalyticsService {
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-    // Total revenue all time
-    const totalRevenueResult = await this.paymentModel.aggregate([
+    // Total revenue all time from BOTH flows
+    // Detailed flow
+    const totalRevenueDetailedResult = await this.paymentModel.aggregate([
       {
         $group: {
           _id: null,
@@ -277,10 +370,26 @@ export class AnalyticsService {
         },
       },
     ]);
-    const totalRevenue = totalRevenueResult[0]?.total || 0;
+    const totalRevenueDetailed = totalRevenueDetailedResult[0]?.total || 0;
 
-    // Current month revenue
-    const currentMonthResult = await this.paymentModel.aggregate([
+    // Simplified flow
+    const totalRevenueSimplifiedResult =
+      await this.memberPaymentModel.aggregate([
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$received' },
+          },
+        },
+      ]);
+    const totalRevenueSimplified =
+      totalRevenueSimplifiedResult[0]?.total || 0;
+
+    const totalRevenue = totalRevenueDetailed + totalRevenueSimplified;
+
+    // Current month revenue from BOTH flows
+    // Detailed flow
+    const currentMonthDetailedResult = await this.paymentModel.aggregate([
       {
         $match: {
           paymentDate: { $gte: startOfMonth },
@@ -294,11 +403,40 @@ export class AnalyticsService {
         },
       },
     ]);
-    const currentMonthRevenue = currentMonthResult[0]?.total || 0;
-    const currentMonthPayments = currentMonthResult[0]?.count || 0;
+    const currentMonthRevenueDetailed =
+      currentMonthDetailedResult[0]?.total || 0;
+    const currentMonthPaymentsDetailed =
+      currentMonthDetailedResult[0]?.count || 0;
 
-    // Last month revenue
-    const lastMonthResult = await this.paymentModel.aggregate([
+    // Simplified flow
+    const currentMonthSimplifiedResult =
+      await this.memberPaymentModel.aggregate([
+        {
+          $match: {
+            paymentDate: { $gte: startOfMonth },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$received' },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+    const currentMonthRevenueSimplified =
+      currentMonthSimplifiedResult[0]?.total || 0;
+    const currentMonthPaymentsSimplified =
+      currentMonthSimplifiedResult[0]?.count || 0;
+
+    const currentMonthRevenue =
+      currentMonthRevenueDetailed + currentMonthRevenueSimplified;
+    const currentMonthPayments =
+      currentMonthPaymentsDetailed + currentMonthPaymentsSimplified;
+
+    // Last month revenue from BOTH flows
+    // Detailed flow
+    const lastMonthDetailedResult = await this.paymentModel.aggregate([
       {
         $match: {
           paymentDate: { $gte: startOfLastMonth, $lte: endOfLastMonth },
@@ -312,30 +450,85 @@ export class AnalyticsService {
         },
       },
     ]);
-    const lastMonthRevenue = lastMonthResult[0]?.total || 0;
-    const lastMonthPayments = lastMonthResult[0]?.count || 0;
+    const lastMonthRevenueDetailed = lastMonthDetailedResult[0]?.total || 0;
+    const lastMonthPaymentsDetailed = lastMonthDetailedResult[0]?.count || 0;
 
-    // Total pending amount
-    const pendingAmountResult = await this.memberSubscriptionModel.aggregate([
-      {
-        $match: {
-          subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
-          pendingAmount: { $gt: 0 },
+    // Simplified flow
+    const lastMonthSimplifiedResult =
+      await this.memberPaymentModel.aggregate([
+        {
+          $match: {
+            paymentDate: { $gte: startOfLastMonth, $lte: endOfLastMonth },
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          total: { $sum: '$pendingAmount' },
-          count: { $sum: 1 },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$received' },
+            count: { $sum: 1 },
+          },
         },
-      },
-    ]);
-    const totalPendingAmount = pendingAmountResult[0]?.total || 0;
-    const subscriptionsWithPending = pendingAmountResult[0]?.count || 0;
+      ]);
+    const lastMonthRevenueSimplified =
+      lastMonthSimplifiedResult[0]?.total || 0;
+    const lastMonthPaymentsSimplified =
+      lastMonthSimplifiedResult[0]?.count || 0;
 
-    // Payment mode breakdown
-    const paymentModeBreakdown = await this.paymentModel.aggregate([
+    const lastMonthRevenue =
+      lastMonthRevenueDetailed + lastMonthRevenueSimplified;
+    const lastMonthPayments =
+      lastMonthPaymentsDetailed + lastMonthPaymentsSimplified;
+
+    // Total pending amount from BOTH flows
+    // Detailed flow: from subscriptions
+    const pendingAmountDetailedResult =
+      await this.memberSubscriptionModel.aggregate([
+        {
+          $match: {
+            subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+            pendingAmount: { $gt: 0 },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$pendingAmount' },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+    const totalPendingDetailed = pendingAmountDetailedResult[0]?.total || 0;
+    const subscriptionsWithPendingDetailed =
+      pendingAmountDetailedResult[0]?.count || 0;
+
+    // Simplified flow: from MemberPayments
+    const pendingAmountSimplifiedResult =
+      await this.memberPaymentModel.aggregate([
+        {
+          $match: {
+            pending: { $gt: 0 },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: '$pending' },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+    const totalPendingSimplified =
+      pendingAmountSimplifiedResult[0]?.total || 0;
+    const paymentsWithPendingSimplified =
+      pendingAmountSimplifiedResult[0]?.count || 0;
+
+    const totalPendingAmount = totalPendingDetailed + totalPendingSimplified;
+    const totalWithPending =
+      subscriptionsWithPendingDetailed + paymentsWithPendingSimplified;
+
+    // Payment mode breakdown from BOTH flows
+    // Detailed flow
+    const paymentModeBreakdownDetailed = await this.paymentModel.aggregate([
       {
         $group: {
           _id: '$paymentMode',
@@ -343,10 +536,44 @@ export class AnalyticsService {
           count: { $sum: 1 },
         },
       },
-      {
-        $sort: { total: -1 },
-      },
     ]);
+
+    // Simplified flow
+    const paymentModeBreakdownSimplified =
+      await this.memberPaymentModel.aggregate([
+        {
+          $group: {
+            _id: '$mop',
+            total: { $sum: '$received' },
+            count: { $sum: 1 },
+          },
+        },
+      ]);
+
+    // Combine and aggregate payment mode breakdowns
+    const paymentModeMap = new Map();
+
+    paymentModeBreakdownDetailed.forEach((item) => {
+      const mode = item._id?.toUpperCase() || 'UNKNOWN';
+      paymentModeMap.set(mode, {
+        _id: mode,
+        total: (paymentModeMap.get(mode)?.total || 0) + (item.total || 0),
+        count: (paymentModeMap.get(mode)?.count || 0) + (item.count || 0),
+      });
+    });
+
+    paymentModeBreakdownSimplified.forEach((item) => {
+      const mode = item._id?.toUpperCase() || 'UNKNOWN';
+      paymentModeMap.set(mode, {
+        _id: mode,
+        total: (paymentModeMap.get(mode)?.total || 0) + (item.total || 0),
+        count: (paymentModeMap.get(mode)?.count || 0) + (item.count || 0),
+      });
+    });
+
+    const paymentModeBreakdown = Array.from(paymentModeMap.values()).sort(
+      (a, b) => b.total - a.total,
+    );
 
     return {
       totalRevenue,
@@ -360,7 +587,7 @@ export class AnalyticsService {
       },
       pending: {
         amount: totalPendingAmount,
-        subscriptions: subscriptionsWithPending,
+        subscriptions: totalWithPending,
       },
       paymentModeBreakdown,
     };
@@ -482,17 +709,14 @@ export class AnalyticsService {
   }
 
   /**
-   * Get payment trends (last 6 months)
+   * Get payment trends (last 6 months) from BOTH flows
    */
   async getPaymentTrends() {
     const now = new Date();
-    const sixMonthsAgo = new Date(
-      now.getFullYear(),
-      now.getMonth() - 5,
-      1,
-    );
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
-    const monthlyTrends = await this.paymentModel.aggregate([
+    // Detailed flow trends
+    const monthlyTrendsDetailed = await this.paymentModel.aggregate([
       {
         $match: {
           paymentDate: { $gte: sixMonthsAgo },
@@ -521,6 +745,72 @@ export class AnalyticsService {
         },
       },
     ]);
+
+    // Simplified flow trends
+    const monthlyTrendsSimplified = await this.memberPaymentModel.aggregate([
+      {
+        $match: {
+          paymentDate: { $gte: sixMonthsAgo },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            year: { $year: '$paymentDate' },
+            month: { $month: '$paymentDate' },
+          },
+          revenue: { $sum: '$received' },
+          payments: { $sum: 1 },
+        },
+      },
+      {
+        $sort: { '_id.year': 1, '_id.month': 1 },
+      },
+      {
+        $project: {
+          _id: 0,
+          year: '$_id.year',
+          month: '$_id.month',
+          revenue: 1,
+          payments: 1,
+        },
+      },
+    ]);
+
+    // Combine both flow trends by month
+    const trendsMap = new Map();
+
+    monthlyTrendsDetailed.forEach((trend) => {
+      const key = `${trend.year}-${trend.month}`;
+      trendsMap.set(key, {
+        year: trend.year,
+        month: trend.month,
+        revenue: trend.revenue,
+        payments: trend.payments,
+      });
+    });
+
+    monthlyTrendsSimplified.forEach((trend) => {
+      const key = `${trend.year}-${trend.month}`;
+      const existing = trendsMap.get(key);
+      if (existing) {
+        existing.revenue += trend.revenue;
+        existing.payments += trend.payments;
+      } else {
+        trendsMap.set(key, {
+          year: trend.year,
+          month: trend.month,
+          revenue: trend.revenue,
+          payments: trend.payments,
+        });
+      }
+    });
+
+    // Sort by year and month
+    const monthlyTrends = Array.from(trendsMap.values()).sort((a, b) => {
+      if (a.year !== b.year) return a.year - b.year;
+      return a.month - b.month;
+    });
 
     return {
       monthlyTrends,

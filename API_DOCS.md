@@ -353,7 +353,13 @@ curl -X DELETE http://localhost:3000/subscription-plans/69adc869d76e8bfe7a7cebaa
 
 ## Member Management APIs
 
-### 1. Create Member
+> **Note:** There are two member registration flows available:
+> 1. **Detailed Flow (Endpoints 1-5)**: Create Member → Assign Subscription → Record Payments separately. Provides fine-grained control with separate Plan templates, Subscriptions, Payments, and Invoices.
+> 2. **Simplified Flow (Endpoints 6-8)**: One-step registration with embedded membership and payment. Uses months instead of plan templates. Payment = Invoice (single entity). Faster for simple use cases.
+>
+> Both flows coexist and work independently. Choose based on your needs.
+
+### 1. Create Member (Detailed Flow)
 Create a new gym member.
 
 **Endpoint:** `POST /members`
@@ -416,8 +422,8 @@ curl -X POST http://localhost:3000/members \
 
 ---
 
-### 2. Get All Members
-Retrieve all gym members. When a member has an active subscription assigned, the `currentSubscriptionId` is populated with subscription details (including plan). When no subscription is assigned, it remains `null`.
+### 2. Get All Members (Detailed Flow)
+Retrieve all gym members (both flows). When a member has an active subscription assigned (detailed flow), the `currentSubscriptionId` is populated with subscription details (including plan). For simplified flow members, check `membershipMonths` field instead.
 
 **Endpoint:** `GET /members`
 
@@ -491,8 +497,8 @@ curl -X GET http://localhost:3000/members \
 
 ---
 
-### 3. Get Member By ID
-Retrieve a specific member by their ID. When the member has an assigned subscription/plan, the response includes populated subscription and plan details. When no subscription is assigned, `currentSubscriptionId` is `null`.
+### 3. Get Member By ID (Both Flows)
+Retrieve a specific member by their ID. For detailed flow members with assigned subscription, the response includes populated subscription and plan details via `currentSubscriptionId`. For simplified flow members, check embedded fields like `membershipMonths`, `startingDate`, `expiryDate`.
 
 **Endpoint:** `GET /members/:id`
 
@@ -574,8 +580,8 @@ curl -X GET http://localhost:3000/members/69adcc16c8030c338569d895 \
 
 ---
 
-### 4. Update Member
-Update an existing member's information. When the member has an assigned subscription, the response includes populated subscription and plan details; otherwise `currentSubscriptionId` is `null`.
+### 4. Update Member (Both Flows)
+Update an existing member's information. Works for both detailed and simplified flow members.
 
 **Endpoint:** `PUT /members/:id`
 
@@ -635,8 +641,8 @@ curl -X PUT http://localhost:3000/members/69adcc16c8030c338569d895 \
 
 ---
 
-### 5. Delete Member
-Delete a member from the system.
+### 5. Delete Member (Both Flows)
+Delete a member from the system. Works for both detailed and simplified flow members.
 
 **Endpoint:** `DELETE /members/:id`
 
@@ -662,6 +668,300 @@ curl -X DELETE http://localhost:3000/members/69adcc16c8030c338569d895 \
 ```json
 {
   "message": "Member with ID 69adcc16c8030c338569d895 not found",
+  "error": "Not Found",
+  "statusCode": 404
+}
+```
+
+---
+
+### 6. Register New Member (Simplified Flow)
+One-step member registration with embedded membership and payment details. This is a simplified alternative to the detailed flow (Member → Subscription → Payment).
+
+**Endpoint:** `POST /members/register`
+
+**Authentication:** Required (JWT)
+
+**Request Body:**
+```json
+{
+  "idNo": "GYM-2026-001",
+  "date": "2026-03-21",
+  "name": "Alex Johnson",
+  "contactNumber": "5551234567",
+  "dob": "1992-03-15",
+  "instagramHandle": "@alexj_fit",
+  "membershipMonths": 12,
+  "amount": 12000,
+  "received": 12000,
+  "pending": 0,
+  "mop": "card",
+  "transactionId": "CARD-2026-001",
+  "salesPerson": "Emily Sales",
+  "trainingType": "PT",
+  "trainer": "Coach Ryan",
+  "memberType": "New",
+  "startingDate": "2026-03-21",
+  "expiryDate": "2027-03-21",
+  "memberStatus": "ACTIVE",
+  "address": "123 Fitness Street",
+  "emergencyContact": "5551111111"
+}
+```
+
+**Field Descriptions:**
+
+*Required Fields:*
+- `date` (string): Payment date in ISO format (YYYY-MM-DD)
+- `name` (string): Member full name
+- `contactNumber` (string): Phone number (must be unique)
+- `membershipMonths` (number): Duration in months (must be >= 1)
+- `amount` (number): Total membership amount
+- `received` (number): Amount received
+- `mop` (string): Mode of payment - "cash", "upi", "card", "bank_transfer"
+- `startingDate` (string): Membership start date (ISO format)
+- `expiryDate` (string): Membership expiry date (ISO format)
+
+*Optional Fields:*
+- `idNo` (string): Member ID number
+- `dob` (string): Date of birth (ISO format)
+- `instagramHandle` (string): Instagram username
+- `pending` (number): Pending amount (auto-calculated if not provided: amount - received)
+- `transactionId` (string): Payment transaction ID
+- `salesPerson` (string): Sales person name
+- `trainingType` (string): Training type (e.g., "PT", "GT")
+- `trainer` (string): Trainer name
+- `memberType` (string): Member type (e.g., "New", "Renewal")
+- `memberStatus` (enum): One of `ACTIVE`, `INACTIVE`, `SUSPENDED` (default: `ACTIVE`)
+- `address` (string): Address
+- `emergencyContact` (string): Emergency contact phone
+
+**Business Logic:**
+- Auto-generates email from contact number: `member{contactNumber}@gym.com`
+- Auto-calculates `pending` if not provided: `pending = amount - received`
+- Validates contact number uniqueness (409 Conflict if duplicate)
+- Creates member record with embedded membership details
+- Creates MemberPayment record (payment/invoice in one)
+- Auto-generates payment notes: "Initial payment for X months membership"
+
+**Response (201 Created):**
+```json
+{
+  "member": {
+    "_id": "69be51a3337375e4f02b91fe",
+    "email": "member5551234567@gym.com",
+    "name": "Alex Johnson",
+    "phone": "5551234567",
+    "idNo": "GYM-2026-001",
+    "dob": "1992-03-15T00:00:00.000Z",
+    "instagramHandle": "@alexj_fit",
+    "salesPerson": "Emily Sales",
+    "trainer": "Coach Ryan",
+    "trainingType": "PT",
+    "memberType": "New",
+    "membershipMonths": 12,
+    "startingDate": "2026-03-21T00:00:00.000Z",
+    "expiryDate": "2027-03-21T00:00:00.000Z",
+    "membershipAmount": 12000,
+    "memberStatus": "ACTIVE",
+    "address": "123 Fitness Street",
+    "emergencyContact": "5551111111",
+    "role": "USER",
+    "userType": "MEMBER",
+    "createdAt": "2026-03-21T08:06:11.333Z",
+    "updatedAt": "2026-03-21T08:06:11.333Z",
+    "__v": 0
+  },
+  "payment": {
+    "_id": "69be51a3337375e4f02b9200",
+    "memberId": "69be51a3337375e4f02b91fe",
+    "amount": 12000,
+    "received": 12000,
+    "pending": 0,
+    "mop": "card",
+    "paymentDate": "2026-03-21T00:00:00.000Z",
+    "transactionId": "CARD-2026-001",
+    "notes": "Initial payment for 12 months membership",
+    "createdAt": "2026-03-21T08:06:11.441Z",
+    "updatedAt": "2026-03-21T08:06:11.441Z",
+    "__v": 0
+  }
+}
+```
+
+**cURL Example:**
+```bash
+curl -X POST http://localhost:3000/members/register \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <access_token>" \
+  -d '{
+    "idNo": "GYM-2026-001",
+    "date": "2026-03-21",
+    "name": "Alex Johnson",
+    "contactNumber": "5551234567",
+    "dob": "1992-03-15",
+    "membershipMonths": 12,
+    "amount": 12000,
+    "received": 12000,
+    "mop": "card",
+    "transactionId": "CARD-2026-001",
+    "salesPerson": "Emily Sales",
+    "trainingType": "PT",
+    "trainer": "Coach Ryan",
+    "memberType": "New",
+    "startingDate": "2026-03-21",
+    "expiryDate": "2027-03-21"
+  }'
+```
+
+**Error Response (409 Conflict) - Duplicate Contact:**
+```json
+{
+  "message": "Member with contact number 5551234567 already exists",
+  "error": "Conflict",
+  "statusCode": 409
+}
+```
+
+**Error Response (400 Bad Request) - Validation:**
+```json
+{
+  "message": [
+    "name should not be empty",
+    "membershipMonths must not be less than 1",
+    "amount must be a number conforming to the specified constraints"
+  ],
+  "error": "Bad Request",
+  "statusCode": 400
+}
+```
+
+---
+
+### 7. Get All Registered Members (Simplified Flow)
+Retrieve all members registered via the simplified flow (members with embedded membership details).
+
+**Endpoint:** `GET /members/register`
+
+**Authentication:** Required (JWT)
+
+**Response (200 OK):**
+```json
+[
+  {
+    "_id": "69be51a3337375e4f02b91fe",
+    "email": "member5551234567@gym.com",
+    "name": "Alex Johnson",
+    "phone": "5551234567",
+    "idNo": "GYM-2026-001",
+    "dob": "1992-03-15T00:00:00.000Z",
+    "instagramHandle": "@alexj_fit",
+    "salesPerson": "Emily Sales",
+    "trainer": "Coach Ryan",
+    "trainingType": "PT",
+    "memberType": "New",
+    "membershipMonths": 12,
+    "startingDate": "2026-03-21T00:00:00.000Z",
+    "expiryDate": "2027-03-21T00:00:00.000Z",
+    "membershipAmount": 12000,
+    "memberStatus": "ACTIVE",
+    "address": "123 Fitness Street",
+    "emergencyContact": "5551111111",
+    "role": "USER",
+    "userType": "MEMBER",
+    "createdAt": "2026-03-21T08:06:11.333Z",
+    "updatedAt": "2026-03-21T08:06:11.333Z"
+  },
+  {
+    "_id": "69be51a3337375e4f02b9205",
+    "email": "member8765432109@gym.com",
+    "name": "Jane Doe",
+    "phone": "8765432109",
+    "membershipMonths": 12,
+    "startingDate": "2026-03-21T00:00:00.000Z",
+    "expiryDate": "2027-03-21T00:00:00.000Z",
+    "membershipAmount": 12000,
+    "memberStatus": "ACTIVE",
+    "role": "USER",
+    "userType": "MEMBER",
+    "createdAt": "2026-03-21T08:07:25.186Z",
+    "updatedAt": "2026-03-21T08:07:25.186Z"
+  }
+]
+```
+
+**Business Logic:**
+- Returns only members with `membershipMonths` field populated
+- Excludes password and refreshToken fields
+- Sorted by creation date (newest first)
+
+**cURL Example:**
+```bash
+curl -X GET http://localhost:3000/members/register \
+  -H "Authorization: Bearer <access_token>"
+```
+
+---
+
+### 8. Get Member Payment History (Simplified Flow)
+Retrieve all payment records for a specific member registered via simplified flow.
+
+**Endpoint:** `GET /members/:id/payments`
+
+**Authentication:** Required (JWT)
+
+**Path Parameters:**
+- `id` (string, required): MongoDB ObjectId of the member
+
+**Response (200 OK):**
+```json
+[
+  {
+    "_id": "69be51a3337375e4f02b9200",
+    "memberId": "69be51a3337375e4f02b91fe",
+    "amount": 12000,
+    "received": 12000,
+    "pending": 0,
+    "mop": "card",
+    "paymentDate": "2026-03-21T00:00:00.000Z",
+    "transactionId": "CARD-2026-001",
+    "notes": "Initial payment for 12 months membership",
+    "createdAt": "2026-03-21T08:06:11.441Z",
+    "updatedAt": "2026-03-21T08:06:11.441Z",
+    "__v": 0
+  },
+  {
+    "_id": "69be52b0337375e4f02b9210",
+    "memberId": "69be51a3337375e4f02b91fe",
+    "amount": 6000,
+    "received": 4000,
+    "pending": 2000,
+    "mop": "upi",
+    "paymentDate": "2026-03-22T00:00:00.000Z",
+    "transactionId": "UPI-2026-002",
+    "notes": "Partial payment for renewal",
+    "createdAt": "2026-03-22T10:15:30.222Z",
+    "updatedAt": "2026-03-22T10:15:30.222Z",
+    "__v": 0
+  }
+]
+```
+
+**Business Logic:**
+- Returns all MemberPayment records for the member
+- Sorted by payment date (newest first), then creation date
+- Each payment record serves as both payment and invoice
+
+**cURL Example:**
+```bash
+curl -X GET http://localhost:3000/members/69be51a3337375e4f02b91fe/payments \
+  -H "Authorization: Bearer <access_token>"
+```
+
+**Error Response (404 Not Found) - Member Not Found:**
+```json
+{
+  "message": "Member with ID 69be51a3337375e4f02b91fe not found",
   "error": "Not Found",
   "statusCode": 404
 }
@@ -2447,6 +2747,75 @@ curl -X GET http://localhost:3000/analytics/payment-trends \
 - `ONLINE` - Online payment gateway
 - `UPI` - UPI payment
 - `BANK_TRANSFER` - Direct bank transfer
+
+---
+
+## API Flow Comparison
+
+### Detailed Flow (Traditional)
+**Use Case:** Full-featured gym management with plan templates, detailed tracking, separate invoices.
+
+**Steps:**
+1. Create subscription plans (templates) → `POST /subscription-plans`
+2. Create member → `POST /members`
+3. Assign plan to member → `POST /member-subscriptions`
+4. Record payments → `POST /payments` (auto-generates invoice)
+5. View invoices → `GET /invoices`
+
+**Pros:**
+- Plan templates reusable across members
+- Detailed payment/invoice separation
+- Subscription lifecycle management (ACTIVE/EXPIRED/CANCELLED)
+- Automatic expiry date calculation
+- Payment status tracking (UNPAID/PARTIALLY_PAID/FULLY_PAID)
+
+**Data Structure:**
+```
+Plan (template) ─┬─> Subscription (instance) ──> Payment ──> Invoice
+                 └─> Subscription (instance) ──> Payment ──> Invoice
+```
+
+### Simplified Flow (Quick Registration)
+**Use Case:** Quick member onboarding, simpler gyms, embedded membership details.
+
+**Steps:**
+1. Register member with membership → `POST /members/register` (one step!)
+2. View registered members → `GET /members/register`
+3. View member payments → `GET /members/:id/payments`
+
+**Pros:**
+- One API call for complete registration
+- No separate plan templates needed
+- Payment = Invoice (single entity)
+- Auto-email generation from phone number
+- Auto-calculate pending amount
+- Faster for simple use cases
+
+**Data Structure:**
+```
+Member (with embedded membership details) ──> MemberPayment (payment + invoice)
+```
+
+### When to Use Which Flow?
+
+**Use Detailed Flow if:**
+- You have standardized subscription plans (Monthly, Quarterly, Annual)
+- You need to change plan pricing without affecting existing members
+- You want separate invoice generation capability
+- You need detailed subscription lifecycle tracking
+- Multiple staff members need to see plan templates
+
+**Use Simplified Flow if:**
+- You have custom pricing per member
+- You want faster registration process
+- You don't need plan templates
+- Payment and invoice can be the same document
+- You prefer embedded data over references
+
+**Both flows can coexist!** Your system can have:
+- Old members using detailed flow (with `currentSubscriptionId`)
+- New members using simplified flow (with `membershipMonths`)
+- GET /members returns both types
 
 ---
 

@@ -41,6 +41,41 @@ export class User {
 
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'MemberSubscription', default: null })
   currentSubscriptionId: MongooseSchema.Types.ObjectId | null;
+
+  // New simplified flow fields
+  @Prop({ type: String, default: null })
+  idNo: string | null;
+
+  @Prop({ type: Date, default: null })
+  dob: Date | null;
+
+  @Prop({ type: String, default: null })
+  instagramHandle: string | null;
+
+  @Prop({ type: String, default: null })
+  salesPerson: string | null;
+
+  @Prop({ type: String, default: null })
+  trainer: string | null;
+
+  @Prop({ type: String, default: null })
+  trainingType: string | null;
+
+  @Prop({ type: String, default: null })
+  memberType: string | null;
+
+  // Membership details (embedded)
+  @Prop({ type: Number, default: null })
+  membershipMonths: number | null;
+
+  @Prop({ type: Date, default: null })
+  startingDate: Date | null;
+
+  @Prop({ type: Date, default: null })
+  expiryDate: Date | null;
+
+  @Prop({ type: Number, default: null })
+  membershipAmount: number | null;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

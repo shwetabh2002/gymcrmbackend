@@ -13,6 +13,10 @@ import {
   SubscriptionPlan,
   SubscriptionPlanSchema,
 } from '../subscription-plans/schemas/subscription-plan.schema';
+import {
+  MemberPayment,
+  MemberPaymentSchema,
+} from '../members/schemas/member-payment.schema';
 
 @Module({
   imports: [
@@ -22,6 +26,7 @@ import {
       { name: MemberSubscription.name, schema: MemberSubscriptionSchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
+      { name: MemberPayment.name, schema: MemberPaymentSchema },
     ]),
   ],
   providers: [AnalyticsService],

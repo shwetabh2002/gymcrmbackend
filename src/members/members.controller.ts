@@ -13,6 +13,7 @@ import {
 import { MembersService } from './members.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
+import { RegisterMemberDto } from './dto/register-member.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('members')
@@ -32,6 +33,28 @@ export class MembersController {
     return this.membersService.findAll();
   }
 
+  // === New Simplified Flow Endpoints (must be before :id routes) ===
+
+  /**
+   * Register a new member with membership and payment in one call
+   * POST /members/register
+   */
+  @Post('register')
+  @HttpCode(HttpStatus.CREATED)
+  async register(@Body() registerDto: RegisterMemberDto) {
+    return this.membersService.register(registerDto);
+  }
+
+  /**
+   * Get all registered members (simplified flow)
+   * GET /members/register
+   */
+  @Get('register')
+  @HttpCode(HttpStatus.OK)
+  async findAllRegistered() {
+    return this.membersService.findAllRegistered();
+  }
+
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   async findById(@Param('id') id: string) {
@@ -49,5 +72,15 @@ export class MembersController {
   async delete(@Param('id') id: string) {
     await this.membersService.delete(id);
     return { message: 'Member deleted successfully' };
+  }
+
+  /**
+   * Get all payments for a specific member
+   * GET /members/:id/payments
+   */
+  @Get(':id/payments')
+  @HttpCode(HttpStatus.OK)
+  async getMemberPayments(@Param('id') id: string) {
+    return this.membersService.getMemberPayments(id);
   }
 }
