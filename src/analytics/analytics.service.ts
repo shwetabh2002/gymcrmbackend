@@ -28,10 +28,47 @@ export class AnalyticsService {
 
   /**
    * Get dashboard overview with key metrics and detailed lists
+   * Supports optional date filtering: startDate/endDate, or month/year
    */
-  async getDashboardOverview() {
+  async getDashboardOverview(
+    startDate?: string,
+    endDate?: string,
+    month?: string,
+    year?: string,
+  ) {
     const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    // Determine date range based on filters
+    let filterStartDate: Date;
+    let filterEndDate: Date;
+
+    if (month && year) {
+      // Month/Year filter
+      const monthNum = parseInt(month, 10) - 1; // JavaScript months are 0-indexed
+      const yearNum = parseInt(year, 10);
+      filterStartDate = new Date(yearNum, monthNum, 1);
+      filterEndDate = new Date(yearNum, monthNum + 1, 0, 23, 59, 59, 999);
+    } else if (year && !month) {
+      // Year only filter
+      const yearNum = parseInt(year, 10);
+      filterStartDate = new Date(yearNum, 0, 1);
+      filterEndDate = new Date(yearNum, 11, 31, 23, 59, 59, 999);
+    } else if (startDate && endDate) {
+      // Custom date range
+      filterStartDate = new Date(startDate);
+      filterEndDate = new Date(endDate);
+      filterEndDate.setHours(23, 59, 59, 999);
+    } else if (startDate) {
+      // Start date only - from start date to now
+      filterStartDate = new Date(startDate);
+      filterEndDate = now;
+    } else {
+      // No filter - use current month
+      filterStartDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      filterEndDate = now;
+    }
+
+    const startOfMonth = filterStartDate;
     const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysFromNow = new Date(
       now.getTime() + 30 * 24 * 60 * 60 * 1000,
@@ -73,12 +110,12 @@ export class AnalyticsService {
 
     const totalRevenue = totalRevenueDetailed + totalRevenueSimplified;
 
-    // Monthly revenue (current month) from BOTH flows
+    // Monthly revenue (filtered period) from BOTH flows
     // Detailed flow
     const monthlyRevenueDetailedResult = await this.paymentModel.aggregate([
       {
         $match: {
-          paymentDate: { $gte: startOfMonth },
+          paymentDate: { $gte: filterStartDate, $lte: filterEndDate },
         },
       },
       {
@@ -96,7 +133,7 @@ export class AnalyticsService {
       await this.memberPaymentModel.aggregate([
         {
           $match: {
-            paymentDate: { $gte: startOfMonth },
+            paymentDate: { $gte: filterStartDate, $lte: filterEndDate },
           },
         },
         {
@@ -814,6 +851,164 @@ export class AnalyticsService {
 
     return {
       monthlyTrends,
+    };
+  }
+
+  /**
+   * Get members expiring in next 7 days from BOTH flows (detailed + simplified memberships array)
+   */
+  async getMembersExpiringIn7Days() {
+    const now = new Date();
+    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+    // Detailed flow: from MemberSubscription model
+    const expiringDetailedFlow = await this.memberSubscriptionModel
+      .find({
+        subscriptionStatus: SubscriptionStatus.ACTIVE,
+        expiryDate: { $gte: now, $lte: sevenDaysFromNow },
+      })
+      .populate('memberId', 'name email phone')
+      .populate('planId', 'name price')
+      .select('memberId planId expiryDate pendingAmount paymentStatus')
+      .sort({ expiryDate: 1 })
+      .exec();
+
+    // Simplified flow: from User.memberships array
+    const usersWithExpiringMemberships = await this.userModel
+      .find({
+        userType: UserType.MEMBER,
+        'memberships.status': 'ACTIVE',
+        'memberships.expiryDate': { $gte: now, $lte: sevenDaysFromNow },
+      })
+      .select('name email phone memberships')
+      .exec();
+
+    // Combine results
+    const expiringList: any[] = [];
+
+    // Add detailed flow results
+    expiringDetailedFlow.forEach((sub: any) => {
+      const daysRemaining = Math.ceil(
+        (new Date(sub.expiryDate).getTime() - now.getTime()) /
+          (1000 * 60 * 60 * 24),
+      );
+      expiringList.push({
+        memberName: sub.memberId?.name || 'Unknown',
+        email: sub.memberId?.email || '',
+        phone: sub.memberId?.phone || '',
+        planName: sub.planId?.name || 'Unknown Plan',
+        expiryDate: sub.expiryDate,
+        daysRemaining,
+        pendingAmount: sub.pendingAmount || 0,
+        paymentStatus: sub.paymentStatus,
+        flow: 'detailed',
+      });
+    });
+
+    // Add simplified flow results (from memberships array)
+    usersWithExpiringMemberships.forEach((user: any) => {
+      const activeMemberships = user.memberships.filter(
+        (m: any) =>
+          m.status === 'ACTIVE' &&
+          new Date(m.expiryDate) >= now &&
+          new Date(m.expiryDate) <= sevenDaysFromNow,
+      );
+
+      activeMemberships.forEach((membership: any) => {
+        const daysRemaining = Math.ceil(
+          (new Date(membership.expiryDate).getTime() - now.getTime()) /
+            (1000 * 60 * 60 * 24),
+        );
+        expiringList.push({
+          memberName: user.name || 'Unknown',
+          email: user.email || '',
+          phone: user.phone || '',
+          planName: membership.package || 'Standard',
+          expiryDate: membership.expiryDate,
+          daysRemaining,
+          pendingAmount: membership.pendingAmount || 0,
+          paymentStatus:
+            membership.pendingAmount > 0 ? 'PENDING' : 'COMPLETED',
+          flow: 'simplified',
+        });
+      });
+    });
+
+    // Sort by expiry date (earliest first)
+    expiringList.sort(
+      (a, b) =>
+        new Date(a.expiryDate).getTime() - new Date(b.expiryDate).getTime(),
+    );
+
+    return {
+      count: expiringList.length,
+      members: expiringList,
+    };
+  }
+
+  /**
+   * Get recent payment updates/activity from BOTH flows with more details
+   */
+  async getPaymentUpdates(limit: number = 20) {
+    // Detailed flow payments
+    const recentPaymentsDetailed = await this.paymentModel
+      .find()
+      .populate('memberId', 'name email phone')
+      .populate('subscriptionId', 'planId')
+      .select('memberId amount paymentMode paymentDate transactionId createdAt')
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .exec();
+
+    // Simplified flow payments
+    const recentPaymentsSimplified = await this.memberPaymentModel
+      .find()
+      .populate('memberId', 'name email phone')
+      .select(
+        'memberId amount received pending mop paymentDate transactionId notes createdAt',
+      )
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .exec();
+
+    // Combine and sort both payment types
+    const allPaymentUpdates = [
+      ...recentPaymentsDetailed.map((p: any) => ({
+        memberName: p.memberId?.name || 'Unknown',
+        email: p.memberId?.email || '',
+        phone: p.memberId?.phone || '',
+        amount: p.amount,
+        paymentMode: p.paymentMode,
+        paymentDate: p.paymentDate,
+        transactionId: p.transactionId,
+        createdAt: p.createdAt,
+        flow: 'detailed',
+      })),
+      ...recentPaymentsSimplified.map((p: any) => ({
+        memberName: p.memberId?.name || 'Unknown',
+        email: p.memberId?.email || '',
+        phone: p.memberId?.phone || '',
+        amount: p.amount,
+        received: p.received,
+        pending: p.pending,
+        paymentMode: p.mop,
+        paymentDate: p.paymentDate,
+        transactionId: p.transactionId,
+        notes: p.notes,
+        createdAt: p.createdAt,
+        flow: 'simplified',
+      })),
+    ]
+      .sort((a, b) => {
+        return (
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+      })
+      .slice(0, limit);
+
+    return {
+      count: allPaymentUpdates.length,
+      payments: allPaymentUpdates,
     };
   }
 }

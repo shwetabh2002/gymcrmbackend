@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -12,6 +17,7 @@ import {
   MemberPayment,
   MemberPaymentDocument,
 } from './schemas/member-payment.schema';
+import { MembersImportService } from './members-import.service';
 
 @Injectable()
 export class MembersService {
@@ -20,6 +26,7 @@ export class MembersService {
     private userModel: Model<UserDocument>,
     @InjectModel(MemberPayment.name)
     private memberPaymentModel: Model<MemberPaymentDocument>,
+    private membersImportService: MembersImportService,
   ) {}
 
   async create(createDto: CreateMemberDto): Promise<UserDocument> {
@@ -41,19 +48,50 @@ export class MembersService {
     return member.save();
   }
 
-  async findAll(): Promise<UserDocument[]> {
-    return this.userModel
+  async findAll(): Promise<any[]> {
+    const members = await this.userModel
       .find({ userType: UserType.MEMBER })
       .select('-password -refreshToken')
+      .sort({ createdAt: -1 }) // Sort by newest first
       .populate({
         path: 'currentSubscriptionId',
         strictPopulate: false,
         populate: { path: 'planId', strictPopulate: false },
       })
       .exec();
+
+    // Enrich with payment summary for members from simplified flow
+    return Promise.all(
+      members.map(async (member) => {
+        // Only add payment summary for simplified flow members (those with membershipMonths)
+        if (member.membershipMonths) {
+          const payments = await this.memberPaymentModel
+            .find({ memberId: member._id } as any)
+            .exec();
+
+          const totalAmount = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+          const totalReceived = payments.reduce((sum, p) => sum + (p.received || 0), 0);
+          const totalPending = Math.max(0, totalAmount - totalReceived);
+          const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+
+          return {
+            ...member.toObject(),
+            paymentSummary: {
+              totalReceived,
+              totalPending,
+              hasPendingBalance: totalPending > 0,
+              lastPaymentDate: lastPayment?.paymentDate || null,
+              lastPaymentAmount: lastPayment?.received || 0,
+              paymentCount: payments.length,
+            },
+          };
+        }
+        return member.toObject();
+      }),
+    );
   }
 
-  async findById(id: string): Promise<UserDocument> {
+  async findById(id: string): Promise<any> {
     const member = await this.userModel
       .findOne({ _id: id, userType: UserType.MEMBER })
       .select('-password -refreshToken')
@@ -66,6 +104,30 @@ export class MembersService {
 
     if (!member) {
       throw new NotFoundException(`Member with ID ${id} not found`);
+    }
+
+    // Add payment summary for simplified flow members
+    if (member.membershipMonths) {
+      const payments = await this.memberPaymentModel
+        .find({ memberId: member._id } as any)
+        .exec();
+
+      const totalAmount = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+      const totalReceived = payments.reduce((sum, p) => sum + (p.received || 0), 0);
+      const totalPending = Math.max(0, totalAmount - totalReceived);
+      const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+
+      return {
+        ...member.toObject(),
+        paymentSummary: {
+          totalReceived,
+          totalPending,
+          hasPendingBalance: totalPending > 0,
+          lastPaymentDate: lastPayment?.paymentDate || null,
+          lastPaymentAmount: lastPayment?.received || 0,
+          paymentCount: payments.length,
+        },
+      };
     }
 
     return member;
@@ -170,18 +232,35 @@ export class MembersService {
       trainingType: registerDto.trainingType,
       memberType: registerDto.memberType,
 
-      // Membership details
+      // Membership details (legacy fields - kept for backward compatibility)
       membershipMonths: registerDto.membershipMonths,
       startingDate: new Date(registerDto.startingDate),
       expiryDate: new Date(registerDto.expiryDate),
       membershipAmount: registerDto.amount,
+
+      // NEW: Create first membership in memberships array
+      memberships: [{
+        startDate: new Date(registerDto.startingDate),
+        expiryDate: new Date(registerDto.expiryDate),
+        months: registerDto.membershipMonths,
+        totalAmount: registerDto.amount,
+        amountPaid: registerDto.received,
+        pendingAmount: pending,
+        status: 'ACTIVE',
+        package: `${registerDto.membershipMonths} MONTH`,
+        trainingType: registerDto.trainingType,
+        trainer: registerDto.trainer,
+        salesPerson: registerDto.salesPerson,
+        memberType: registerDto.memberType,
+      }],
     });
 
     const savedMember = await member.save();
 
-    // Create payment/invoice record
+    // Create payment/invoice record linked to the first membership
     const payment = new this.memberPaymentModel({
       memberId: savedMember._id,
+      membershipId: savedMember.memberships[0]._id, // Link to first membership
       amount: registerDto.amount,
       received: registerDto.received,
       pending: pending,
@@ -219,6 +298,7 @@ export class MembersService {
 
   /**
    * Create a new payment for an existing member
+   * If renewalMonths is provided, extends the membership
    */
   async createPayment(createPaymentDto: {
     memberId: string;
@@ -229,7 +309,9 @@ export class MembersService {
     paymentDate: string;
     transactionId?: string;
     notes?: string;
-  }): Promise<MemberPaymentDocument> {
+    renewalMonths?: number;
+    newExpiryDate?: string;
+  }): Promise<{ payment: MemberPaymentDocument; member: UserDocument }> {
     // Validate member exists
     const member = await this.userModel
       .findOne({ _id: createPaymentDto.memberId, userType: UserType.MEMBER })
@@ -241,15 +323,71 @@ export class MembersService {
       );
     }
 
+    // Find active membership
+    const activeMembership = member.memberships?.find(m => m.status === 'ACTIVE');
+
+    if (!activeMembership && !createPaymentDto.renewalMonths) {
+      throw new NotFoundException(
+        `No active membership found for member ${createPaymentDto.memberId}. Please provide renewalMonths to create a new membership.`,
+      );
+    }
+
     // Auto-calculate pending if not provided
     const pending =
       createPaymentDto.pending !== undefined
         ? createPaymentDto.pending
         : createPaymentDto.amount - createPaymentDto.received;
 
-    // Create payment
+    // If this payment has received amount but zero amount (clearing old pending),
+    // apply the received amount to old pending payments AND update their memberships
+    let remainingToApply = createPaymentDto.received;
+
+    if (createPaymentDto.amount === 0 && createPaymentDto.received > 0) {
+      // This is a payment to clear old pending balances
+      // Find all payments with pending amounts for this member
+      const oldPayments = await this.memberPaymentModel
+        .find({
+          memberId: createPaymentDto.memberId as any,
+          pending: { $gt: 0 }
+        })
+        .sort({ paymentDate: 1 }) // Oldest first
+        .exec();
+
+      // Apply received amount to old pending payments
+      for (const oldPayment of oldPayments) {
+        if (remainingToApply <= 0) break;
+
+        const amountToClear = Math.min(oldPayment.pending, remainingToApply);
+
+        oldPayment.received += amountToClear;
+        oldPayment.pending -= amountToClear;
+
+        await oldPayment.save();
+
+        // Update the linked membership's amountPaid and pendingAmount
+        if (oldPayment.membershipId) {
+          const membershipToUpdate = member.memberships?.find(
+            m => m._id.toString() === oldPayment.membershipId?.toString()
+          );
+
+          if (membershipToUpdate) {
+            membershipToUpdate.amountPaid += amountToClear;
+            membershipToUpdate.pendingAmount -= amountToClear;
+            membershipToUpdate.pendingAmount = Math.max(0, membershipToUpdate.pendingAmount);
+          }
+        }
+
+        remainingToApply -= amountToClear;
+      }
+
+      // Save member with updated memberships
+      await member.save();
+    }
+
+    // Create new payment record linked to active membership
     const payment = new this.memberPaymentModel({
       memberId: createPaymentDto.memberId,
+      membershipId: activeMembership?._id || null,
       amount: createPaymentDto.amount,
       received: createPaymentDto.received,
       pending: pending,
@@ -259,7 +397,88 @@ export class MembersService {
       notes: createPaymentDto.notes || 'Additional payment',
     });
 
-    return payment.save();
+    const savedPayment = await payment.save();
+
+    // Update active membership's amountPaid and pendingAmount
+    if (activeMembership && createPaymentDto.amount > 0) {
+      activeMembership.amountPaid += createPaymentDto.received;
+      activeMembership.pendingAmount -= createPaymentDto.received;
+      activeMembership.pendingAmount = Math.max(0, activeMembership.pendingAmount);
+
+      await member.save();
+    }
+
+    // Handle membership renewal - mark old as EXPIRED and create new ACTIVE membership
+    if (createPaymentDto.renewalMonths || createPaymentDto.newExpiryDate) {
+      // Mark current active membership as EXPIRED
+      if (activeMembership) {
+        activeMembership.status = 'EXPIRED';
+      }
+
+      // Calculate new membership dates
+      const currentExpiry = activeMembership?.expiryDate
+        ? new Date(activeMembership.expiryDate)
+        : new Date();
+
+      let newExpiryDate: Date;
+      if (createPaymentDto.newExpiryDate) {
+        newExpiryDate = new Date(createPaymentDto.newExpiryDate);
+      } else if (createPaymentDto.renewalMonths) {
+        newExpiryDate = new Date(currentExpiry);
+        newExpiryDate.setMonth(newExpiryDate.getMonth() + createPaymentDto.renewalMonths);
+      } else {
+        newExpiryDate = currentExpiry;
+      }
+
+      const newStartDate = new Date(currentExpiry);
+      newStartDate.setDate(newStartDate.getDate() + 1); // Start day after old membership expires
+
+      // Create new membership
+      const newMembership = {
+        startDate: newStartDate,
+        expiryDate: newExpiryDate,
+        months: createPaymentDto.renewalMonths || 0,
+        totalAmount: createPaymentDto.amount,
+        amountPaid: createPaymentDto.received,
+        pendingAmount: createPaymentDto.amount - createPaymentDto.received,
+        status: 'ACTIVE',
+        package: createPaymentDto.renewalMonths ? `${createPaymentDto.renewalMonths} MONTH` : null,
+        trainingType: activeMembership?.trainingType || null,
+        trainer: activeMembership?.trainer || null,
+        salesPerson: activeMembership?.salesPerson || null,
+        memberType: 'Renewal',
+      };
+
+      member.memberships.push(newMembership as any);
+
+      // Update legacy fields for backward compatibility
+      member.expiryDate = newExpiryDate;
+      member.startingDate = newStartDate;
+      member.membershipMonths = (member.membershipMonths || 0) + (createPaymentDto.renewalMonths || 0);
+      member.membershipAmount = (member.membershipAmount || 0) + createPaymentDto.amount;
+
+      await member.save();
+
+      // Update saved payment to link to new membership
+      savedPayment.membershipId = member.memberships[member.memberships.length - 1]._id;
+      await savedPayment.save();
+
+      // Fetch updated member
+      const updatedMember = await this.userModel
+        .findById(createPaymentDto.memberId)
+        .select('-password -refreshToken')
+        .exec();
+
+      return {
+        payment: savedPayment,
+        member: updatedMember!,
+      };
+    }
+
+    return {
+      payment: savedPayment,
+      member: member,
+    };
   }
 
   /**
@@ -299,13 +518,40 @@ export class MembersService {
     const total = await this.userModel.countDocuments(filter).exec();
 
     // Get paginated results
-    const data = await this.userModel
+    const members = await this.userModel
       .find(filter)
       .select('-password -refreshToken')
       .sort({ [sortBy]: sortOrder })
       .skip(skip)
       .limit(limit)
       .exec();
+
+    // Enrich with payment summary for each member
+    const data = await Promise.all(
+      members.map(async (member) => {
+        // Get payment summary for this member
+        const payments = await this.memberPaymentModel
+          .find({ memberId: member._id } as any)
+          .exec();
+
+        const totalAmount = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+        const totalReceived = payments.reduce((sum, p) => sum + (p.received || 0), 0);
+        const totalPending = Math.max(0, totalAmount - totalReceived);
+        const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+
+        return {
+          ...member.toObject(),
+          paymentSummary: {
+            totalReceived,
+            totalPending,
+            hasPendingBalance: totalPending > 0,
+            lastPaymentDate: lastPayment?.paymentDate || null,
+            lastPaymentAmount: lastPayment?.received || 0,
+            paymentCount: payments.length,
+          },
+        };
+      }),
+    );
 
     return {
       data,
@@ -390,5 +636,134 @@ export class MembersService {
         hasPrevPage: page > 1,
       },
     };
+  }
+
+  /**
+   * Import members from Excel file
+   */
+  async importFromExcel(buffer: Buffer): Promise<{
+    success: number;
+    failed: number;
+    errors: Array<{ row: number; name: string; error: string }>;
+    imported: Array<{ member: UserDocument; payment: MemberPaymentDocument }>;
+  }> {
+    // Parse Excel file
+    const members = this.membersImportService.parseExcelFile(buffer);
+
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: [] as Array<{ row: number; name: string; error: string }>,
+      imported: [] as Array<{
+        member: UserDocument;
+        payment: MemberPaymentDocument;
+      }>,
+    };
+
+    // Process each member
+    for (let i = 0; i < members.length; i++) {
+      const memberData = members[i];
+      const rowNumber = i + 2; // Excel row number (1-indexed + header)
+
+      try {
+        // Check if member already exists by phone number
+        const existing = await this.userModel
+          .findOne({
+            phone: memberData.contactNumber,
+            userType: UserType.MEMBER,
+          })
+          .exec();
+
+        if (existing) {
+          results.errors.push({
+            row: rowNumber,
+            name: memberData.name,
+            error: `Member with phone ${memberData.contactNumber} already exists`,
+          });
+          results.failed++;
+          continue;
+        }
+
+        // Extract membership months from package
+        const membershipMonths =
+          this.membersImportService.extractMonthsFromPackage(
+            memberData.package,
+          );
+
+        // Generate email from contact number
+        const email = `member${memberData.contactNumber}@gym.com`;
+
+        // Create member with memberships array
+        const member = new this.userModel({
+          name: memberData.name,
+          email: email,
+          phone: memberData.contactNumber,
+          userType: UserType.MEMBER,
+          role: Role.USER,
+          password: 'N/A',
+          memberStatus: MemberStatus.ACTIVE,
+          idNo: memberData.idNo,
+          dob: memberData.dob ? new Date(memberData.dob) : null,
+          instagramHandle: memberData.instagramHandle,
+          salesPerson: memberData.salesPerson,
+          trainer: memberData.trainer,
+          trainingType: memberData.trainingType,
+          memberType: memberData.memberType,
+          membershipMonths: membershipMonths,
+          startingDate: new Date(memberData.startingDate),
+          expiryDate: new Date(memberData.expiryDate),
+          membershipAmount: memberData.amount,
+          memberships: [{
+            startDate: new Date(memberData.startingDate),
+            expiryDate: new Date(memberData.expiryDate),
+            months: membershipMonths,
+            totalAmount: memberData.amount,
+            amountPaid: memberData.received,
+            pendingAmount: memberData.pending,
+            status: 'ACTIVE',
+            package: memberData.package,
+            trainingType: memberData.trainingType,
+            trainer: memberData.trainer,
+            salesPerson: memberData.salesPerson,
+            memberType: memberData.memberType,
+          }],
+        });
+
+        const savedMember = await member.save();
+
+        // Get the created membership ID
+        const membershipId = savedMember.memberships[0]._id;
+
+        // Create payment record linked to the membership
+        const payment = new this.memberPaymentModel({
+          memberId: savedMember._id,
+          membershipId: membershipId,
+          amount: memberData.amount,
+          received: memberData.received,
+          pending: memberData.pending,
+          mop: memberData.mop,
+          paymentDate: new Date(memberData.date),
+          transactionId: undefined,
+          notes: `Imported from Excel - ${memberData.package}`,
+        });
+
+        const savedPayment = await payment.save();
+
+        results.imported.push({
+          member: savedMember,
+          payment: savedPayment,
+        });
+        results.success++;
+      } catch (error) {
+        results.errors.push({
+          row: rowNumber,
+          name: memberData.name,
+          error: error.message,
+        });
+        results.failed++;
+      }
+    }
+
+    return results;
   }
 }

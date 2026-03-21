@@ -42,4 +42,14 @@ export class CreatePaymentDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  // Renewal fields (optional) - if provided, updates member's membership details
+  @IsNumber()
+  @IsOptional()
+  @Min(1)
+  renewalMonths?: number; // Number of months to extend membership
+
+  @IsDateString()
+  @IsOptional()
+  newExpiryDate?: string; // New expiry date after renewal
 }

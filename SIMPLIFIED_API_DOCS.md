@@ -314,17 +314,30 @@ Create a new payment for an existing member (renewals, partial payments, etc.).
 
 **Endpoint:** `POST /members/payments`
 
-**Request Body:**
+**Request Body (Basic Payment):**
+```json
+{
+  "memberId": "69be51a3337375e4f02b91fe",
+  "amount": 1000,
+  "received": 1000,
+  "mop": "cash",
+  "paymentDate": "2026-06-21",
+  "notes": "Partial payment"
+}
+```
+
+**Request Body (Renewal Payment - Updates Member Data):**
 ```json
 {
   "memberId": "69be51a3337375e4f02b91fe",
   "amount": 3000,
   "received": 3000,
-  "pending": 0,
   "mop": "upi",
   "paymentDate": "2026-06-21",
   "transactionId": "UPI-RENEWAL-001",
-  "notes": "3-month renewal payment"
+  "notes": "3-month renewal payment",
+  "renewalMonths": 3,
+  "newExpiryDate": "2027-06-21"
 }
 ```
 
@@ -339,23 +352,45 @@ Create a new payment for an existing member (renewals, partial payments, etc.).
 - `pending` - Pending amount (auto-calculated if not provided: amount - received)
 - `transactionId` - Transaction reference
 - `notes` - Payment notes (default: "Additional payment")
+- `renewalMonths` - Number of months to extend membership (updates member's expiryDate and membershipMonths)
+- `newExpiryDate` - New expiry date (YYYY-MM-DD) - if provided, overrides renewalMonths calculation
 
 **Response (201 Created):**
 ```json
 {
-  "_id": "69be52b0337375e4f02b9210",
-  "memberId": "69be51a3337375e4f02b91fe",
-  "amount": 3000,
-  "received": 3000,
-  "pending": 0,
-  "mop": "upi",
-  "paymentDate": "2026-06-21T00:00:00.000Z",
-  "transactionId": "UPI-RENEWAL-001",
-  "notes": "3-month renewal payment",
-  "createdAt": "2026-06-21T10:30:00.000Z",
-  "updatedAt": "2026-06-21T10:30:00.000Z"
+  "payment": {
+    "_id": "69be52b0337375e4f02b9210",
+    "memberId": "69be51a3337375e4f02b91fe",
+    "amount": 3000,
+    "received": 3000,
+    "pending": 0,
+    "mop": "upi",
+    "paymentDate": "2026-06-21T00:00:00.000Z",
+    "transactionId": "UPI-RENEWAL-001",
+    "notes": "3-month renewal payment",
+    "createdAt": "2026-06-21T10:30:00.000Z",
+    "updatedAt": "2026-06-21T10:30:00.000Z"
+  },
+  "member": {
+    "_id": "69be51a3337375e4f02b91fe",
+    "name": "Alex Johnson",
+    "phone": "5551234567",
+    "membershipMonths": 15,
+    "expiryDate": "2027-06-21T00:00:00.000Z",
+    "membershipAmount": 15000
+  }
 }
 ```
+
+**How Renewal Works:**
+- If `renewalMonths` is provided:
+  - Adds months to current `expiryDate`
+  - Increments `membershipMonths`
+  - Adds payment amount to `membershipAmount`
+- If `newExpiryDate` is provided:
+  - Sets `expiryDate` to the specified date
+  - Adds payment amount to `membershipAmount`
+- Member data is automatically updated in the database
 
 **Use Cases:**
 - ✅ Renewal payments
@@ -364,7 +399,22 @@ Create a new payment for an existing member (renewals, partial payments, etc.).
 - ✅ Locker fees
 - ✅ Any subsequent payment after initial registration
 
-**cURL:**
+**cURL (Basic Payment):**
+```bash
+curl -X POST http://localhost:3000/members/payments \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "memberId": "69be51a3337375e4f02b91fe",
+    "amount": 1000,
+    "received": 1000,
+    "mop": "cash",
+    "paymentDate": "2026-06-21",
+    "notes": "Partial payment"
+  }'
+```
+
+**cURL (Renewal Payment - Updates Member):**
 ```bash
 curl -X POST http://localhost:3000/members/payments \
   -H "Content-Type: application/json" \
@@ -376,7 +426,8 @@ curl -X POST http://localhost:3000/members/payments \
     "mop": "upi",
     "paymentDate": "2026-06-21",
     "transactionId": "UPI-RENEWAL-001",
-    "notes": "Renewal payment"
+    "notes": "3-month renewal",
+    "renewalMonths": 3
   }'
 ```
 
@@ -554,6 +605,102 @@ curl -s -X GET "http://localhost:3000/members/$MEMBER_ID/payments" \
 curl -s -X GET "http://localhost:3000/members/payments?search=john" \
   -H "Authorization: Bearer $TOKEN" | jq '.'
 ```
+
+---
+
+### 6. Bulk Import from Excel
+
+Import multiple members at once from an Excel file.
+
+**Endpoint:** `POST /members/import`
+
+**Content-Type:** `multipart/form-data`
+
+**File Format Requirements:**
+- Excel file (.xlsx or .xls)
+- Required columns:
+  - `ID. NO` - Unique member ID (e.g., DLF-001)
+  - `Date` - Registration date
+  - `Client Name` - Full name
+  - `Phone Number` - Contact number (unique)
+  - `PACKAGE` - Membership duration (e.g., 1MONTH, 3MONTH, 6MONTH, 12MONTH)
+  - `AMOUNT` - Membership amount
+  - `RECEIVED` - Amount received
+  - `BAL AMOUNT` - Pending amount (use "NIL" for zero)
+  - `MOP` - Mode of payment (CASH, SCAN/UPI, CARD, BANK)
+  - `STARTING DATE` - Membership start date
+  - `EXPIRY DATE` - Membership expiry date
+
+- Optional columns:
+  - `DOB` - Date of birth
+  - `INSTAGRAM` - Instagram handle
+  - `SALES` - Sales person name
+  - `TRAINING TYPE` - GT, PT, SELF, etc.
+  - `Trainer assigned` - Trainer name
+  - `MEMBER TYPE` - NEW, OLD, etc.
+
+**Response (201 Created):**
+```json
+{
+  "success": 13,
+  "failed": 1,
+  "errors": [
+    {
+      "row": 13,
+      "name": "JOHN DOE",
+      "error": "Member with phone 9999999999 already exists"
+    }
+  ],
+  "imported": [
+    {
+      "member": { ... },
+      "payment": { ... }
+    }
+  ]
+}
+```
+
+**Success/Error Tracking:**
+- `success` - Number of successfully imported members
+- `failed` - Number of failed imports
+- `errors` - Array of errors with row number, name, and error message
+- `imported` - Array of successfully imported member+payment pairs
+
+**cURL:**
+```bash
+curl -X POST http://localhost:3000/members/import \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@/path/to/members.xlsx"
+```
+
+**JavaScript Example:**
+```javascript
+const formData = new FormData();
+formData.append('file', fileInput.files[0]);
+
+fetch('http://localhost:3000/members/import', {
+  method: 'POST',
+  headers: {
+    'Authorization': `Bearer ${token}`
+  },
+  body: formData
+})
+.then(res => res.json())
+.then(data => {
+  console.log(`Success: ${data.success}, Failed: ${data.failed}`);
+  if (data.errors.length > 0) {
+    console.error('Errors:', data.errors);
+  }
+});
+```
+
+**Notes:**
+- Duplicate phone numbers are automatically detected and skipped
+- Each row is processed independently - errors don't stop the import
+- Invalid package formats (typos) are handled gracefully
+- Dates support multiple formats: Excel serial dates, M/D/YYYY, YYYY-MM-DD
+- MOP values are normalized (e.g., "SCAN" → "upi", "CASH" → "cash")
+- Auto-generated emails use format: `member{phoneNumber}@gym.com`
 
 ---
 

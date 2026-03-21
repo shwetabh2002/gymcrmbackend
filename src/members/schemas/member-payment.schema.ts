@@ -8,6 +8,9 @@ export class MemberPayment {
   @Prop({ type: MongooseSchema.Types.ObjectId, ref: 'User', required: true })
   memberId: MongooseSchema.Types.ObjectId;
 
+  @Prop({ type: MongooseSchema.Types.ObjectId, default: null })
+  membershipId: MongooseSchema.Types.ObjectId | null; // Links to specific membership in user.memberships array
+
   @Prop({ type: Number, required: true })
   amount: number;
 

@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards, Query } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
@@ -8,8 +8,18 @@ export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('dashboard')
-  async getDashboardOverview() {
-    return this.analyticsService.getDashboardOverview();
+  async getDashboardOverview(
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('month') month?: string,
+    @Query('year') year?: string,
+  ) {
+    return this.analyticsService.getDashboardOverview(
+      startDate,
+      endDate,
+      month,
+      year,
+    );
   }
 
   @Get('members')
@@ -30,5 +40,15 @@ export class AnalyticsController {
   @Get('payment-trends')
   async getPaymentTrends() {
     return this.analyticsService.getPaymentTrends();
+  }
+
+  @Get('expiring-in-7-days')
+  async getMembersExpiringIn7Days() {
+    return this.analyticsService.getMembersExpiringIn7Days();
+  }
+
+  @Get('payment-updates')
+  async getPaymentUpdates() {
+    return this.analyticsService.getPaymentUpdates(20);
   }
 }

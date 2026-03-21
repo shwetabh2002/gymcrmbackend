@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MembersService } from './members.service';
 import { MembersController } from './members.controller';
+import { MembersImportService } from './members-import.service';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import {
   MemberPayment,
@@ -15,7 +16,7 @@ import {
       { name: MemberPayment.name, schema: MemberPaymentSchema },
     ]),
   ],
-  providers: [MembersService],
+  providers: [MembersService, MembersImportService],
   controllers: [MembersController],
   exports: [MembersService],
 })

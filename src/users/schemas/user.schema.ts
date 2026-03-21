@@ -3,6 +3,7 @@ import { Document, Schema as MongooseSchema } from 'mongoose';
 import { Role } from '../../common/enums/role.enum';
 import { UserType } from '../../common/enums/user-type.enum';
 import { MemberStatus } from '../../common/enums/member-status.enum';
+import { Membership, MembershipSchema } from './membership.schema';
 
 export type UserDocument = User & Document;
 
@@ -76,6 +77,10 @@ export class User {
 
   @Prop({ type: Number, default: null })
   membershipAmount: number | null;
+
+  // NEW: Memberships array for tracking multiple memberships
+  @Prop({ type: [MembershipSchema], default: [] })
+  memberships: Membership[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

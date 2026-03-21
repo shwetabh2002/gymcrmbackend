@@ -10,7 +10,11 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { MembersService } from './members.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
@@ -20,7 +24,6 @@ import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('members')
-@UseGuards(JwtAuthGuard)
 export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 
@@ -76,6 +79,25 @@ export class MembersController {
   @HttpCode(HttpStatus.CREATED)
   async createPayment(@Body() createPaymentDto: CreatePaymentDto) {
     return this.membersService.createPayment(createPaymentDto);
+  }
+
+  /**
+   * Import members from Excel file
+   * POST /members/import
+   */
+  @Post('import')
+  @HttpCode(HttpStatus.CREATED)
+  @UseInterceptors(FileInterceptor('file'))
+  async importMembers(@UploadedFile() file: any) {
+    if (!file) {
+      throw new BadRequestException('No file uploaded');
+    }
+
+    if (!file.originalname.match(/\.(xlsx|xls)$/)) {
+      throw new BadRequestException('Only Excel files (.xlsx, .xls) are allowed');
+    }
+
+    return this.membersService.importFromExcel(file.buffer);
   }
 
   @Get(':id')
