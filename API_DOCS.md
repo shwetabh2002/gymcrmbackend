@@ -903,7 +903,72 @@ curl -X GET http://localhost:3000/members/register \
 
 ---
 
-### 8. Get Member Payment History (Simplified Flow)
+### 8. Get All Payments (Simplified Flow)
+Retrieve all payment records from the simplified flow.
+
+**Endpoint:** `GET /members/payments`
+
+**Authentication:** Required (JWT)
+
+**Response (200 OK):**
+```json
+[
+  {
+    "_id": "69be51a3337375e4f02b9200",
+    "memberId": {
+      "_id": "69be51a3337375e4f02b91fe",
+      "name": "Alex Johnson",
+      "email": "member5551234567@gym.com",
+      "phone": "5551234567"
+    },
+    "amount": 12000,
+    "received": 12000,
+    "pending": 0,
+    "mop": "card",
+    "paymentDate": "2026-03-21T00:00:00.000Z",
+    "transactionId": "CARD-2026-001",
+    "notes": "Initial payment for 12 months membership",
+    "createdAt": "2026-03-21T08:06:11.441Z",
+    "updatedAt": "2026-03-21T08:06:11.441Z",
+    "__v": 0
+  },
+  {
+    "_id": "69be52b0337375e4f02b9210",
+    "memberId": {
+      "_id": "69be51a3337375e4f02b9205",
+      "name": "Jane Doe",
+      "email": "member8765432109@gym.com",
+      "phone": "8765432109"
+    },
+    "amount": 12000,
+    "received": 8000,
+    "pending": 4000,
+    "mop": "upi",
+    "paymentDate": "2026-03-21T00:00:00.000Z",
+    "transactionId": "UPI-2026-002",
+    "notes": "Initial payment for 12 months membership",
+    "createdAt": "2026-03-21T08:07:25.298Z",
+    "updatedAt": "2026-03-21T08:07:25.298Z",
+    "__v": 0
+  }
+]
+```
+
+**Business Logic:**
+- Returns all MemberPayment records
+- Populated with member details (name, email, phone)
+- Sorted by payment date (newest first), then creation date
+- Each payment record serves as both payment and invoice
+
+**cURL Example:**
+```bash
+curl -X GET http://localhost:3000/members/payments \
+  -H "Authorization: Bearer <access_token>"
+```
+
+---
+
+### 9. Get Member Payment History (Simplified Flow)
 Retrieve all payment records for a specific member registered via simplified flow.
 
 **Endpoint:** `GET /members/:id/payments`
@@ -2781,7 +2846,8 @@ Plan (template) ─┬─> Subscription (instance) ──> Payment ──> Invoi
 **Steps:**
 1. Register member with membership → `POST /members/register` (one step!)
 2. View registered members → `GET /members/register`
-3. View member payments → `GET /members/:id/payments`
+3. View all payments → `GET /members/payments`
+4. View specific member's payments → `GET /members/:id/payments`
 
 **Pros:**
 - One API call for complete registration

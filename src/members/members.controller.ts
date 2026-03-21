@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   HttpCode,
   HttpStatus,
   UseGuards,
@@ -14,6 +15,8 @@ import { MembersService } from './members.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { RegisterMemberDto } from './dto/register-member.dto';
+import { CreatePaymentDto } from './dto/create-payment.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 
 @Controller('members')
@@ -46,13 +49,33 @@ export class MembersController {
   }
 
   /**
-   * Get all registered members (simplified flow)
-   * GET /members/register
+   * Get all registered members (simplified flow) with pagination and search
+   * GET /members/register?page=1&limit=10&search=john
    */
   @Get('register')
   @HttpCode(HttpStatus.OK)
-  async findAllRegistered() {
-    return this.membersService.findAllRegistered();
+  async findAllRegistered(@Query() query: PaginationQueryDto) {
+    return this.membersService.findAllRegistered(query);
+  }
+
+  /**
+   * Get all payments from simplified flow with pagination and search
+   * GET /members/payments?page=1&limit=10&search=john
+   */
+  @Get('payments')
+  @HttpCode(HttpStatus.OK)
+  async getAllPayments(@Query() query: PaginationQueryDto) {
+    return this.membersService.getAllPayments(query);
+  }
+
+  /**
+   * Create a new payment for an existing member
+   * POST /members/payments
+   */
+  @Post('payments')
+  @HttpCode(HttpStatus.CREATED)
+  async createPayment(@Body() createPaymentDto: CreatePaymentDto) {
+    return this.membersService.createPayment(createPaymentDto);
   }
 
   @Get(':id')

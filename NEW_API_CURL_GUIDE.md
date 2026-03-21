@@ -260,7 +260,56 @@ curl -X GET http://localhost:3000/members/register \
 
 ---
 
-## STEP 4: Get Member's Payment History
+## STEP 4: Get All Payments (All Members)
+
+```bash
+curl -X GET http://localhost:3000/members/payments \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
+**Response:**
+```json
+[
+  {
+    "_id": "69be51a3337375e4f02b9200",
+    "memberId": {
+      "_id": "69be51a3337375e4f02b91fe",
+      "name": "John Smith",
+      "email": "member9876543210@gym.com",
+      "phone": "9876543210"
+    },
+    "amount": 6000,
+    "received": 6000,
+    "pending": 0,
+    "mop": "cash",
+    "paymentDate": "2026-03-21T00:00:00.000Z",
+    "transactionId": "CASH-001",
+    "notes": "Initial payment for 6 months membership",
+    "createdAt": "2026-03-21T08:06:11.333Z"
+  },
+  {
+    "_id": "69be51a3337375e4f02b9207",
+    "memberId": {
+      "_id": "69be51a3337375e4f02b9205",
+      "name": "Jane Doe",
+      "email": "member8765432109@gym.com",
+      "phone": "8765432109"
+    },
+    "amount": 12000,
+    "received": 8000,
+    "pending": 4000,
+    "mop": "upi",
+    "paymentDate": "2026-03-21T00:00:00.000Z",
+    "transactionId": "UPI-2026-001",
+    "notes": "Initial payment for 12 months membership",
+    "createdAt": "2026-03-21T08:07:25.186Z"
+  }
+]
+```
+
+---
+
+## STEP 5: Get Member's Payment History
 
 ```bash
 # Replace MEMBER_ID with actual member ID from Step 2
@@ -292,7 +341,7 @@ curl -X GET http://localhost:3000/members/69be51a3337375e4f02b91fe/payments \
 
 ---
 
-## STEP 5: Get All Members (Old + New Flow)
+## STEP 6: Get All Members (Old + New Flow)
 
 This shows ALL members (both old detailed flow and new simplified flow):
 

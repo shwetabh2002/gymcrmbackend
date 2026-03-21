@@ -218,16 +218,177 @@ export class MembersService {
   }
 
   /**
-   * Get all registered members (with embedded membership details)
+   * Create a new payment for an existing member
    */
-  async findAllRegistered(): Promise<UserDocument[]> {
-    return this.userModel
-      .find({
-        userType: UserType.MEMBER,
-        membershipMonths: { $ne: null }, // Only members from simplified flow
-      })
-      .select('-password -refreshToken')
-      .sort({ createdAt: -1 })
+  async createPayment(createPaymentDto: {
+    memberId: string;
+    amount: number;
+    received: number;
+    pending?: number;
+    mop: string;
+    paymentDate: string;
+    transactionId?: string;
+    notes?: string;
+  }): Promise<MemberPaymentDocument> {
+    // Validate member exists
+    const member = await this.userModel
+      .findOne({ _id: createPaymentDto.memberId, userType: UserType.MEMBER })
       .exec();
+
+    if (!member) {
+      throw new NotFoundException(
+        `Member with ID ${createPaymentDto.memberId} not found`,
+      );
+    }
+
+    // Auto-calculate pending if not provided
+    const pending =
+      createPaymentDto.pending !== undefined
+        ? createPaymentDto.pending
+        : createPaymentDto.amount - createPaymentDto.received;
+
+    // Create payment
+    const payment = new this.memberPaymentModel({
+      memberId: createPaymentDto.memberId,
+      amount: createPaymentDto.amount,
+      received: createPaymentDto.received,
+      pending: pending,
+      mop: createPaymentDto.mop,
+      paymentDate: new Date(createPaymentDto.paymentDate),
+      transactionId: createPaymentDto.transactionId,
+      notes: createPaymentDto.notes || 'Additional payment',
+    });
+
+    return payment.save();
+  }
+
+  /**
+   * Get all registered members (with embedded membership details)
+   * Supports pagination and search
+   */
+  async findAllRegistered(query?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }) {
+    const page = query?.page || 1;
+    const limit = query?.limit || 10;
+    const skip = (page - 1) * limit;
+    const sortOrder = query?.sortOrder === 'asc' ? 1 : -1;
+    const sortBy = query?.sortBy || 'createdAt';
+
+    // Build filter
+    const filter: any = {
+      userType: UserType.MEMBER,
+      membershipMonths: { $ne: null }, // Only members from simplified flow
+    };
+
+    // Add search filter
+    if (query?.search) {
+      filter.$or = [
+        { name: { $regex: query.search, $options: 'i' } },
+        { email: { $regex: query.search, $options: 'i' } },
+        { phone: { $regex: query.search, $options: 'i' } },
+        { idNo: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    // Get total count for pagination metadata
+    const total = await this.userModel.countDocuments(filter).exec();
+
+    // Get paginated results
+    const data = await this.userModel
+      .find(filter)
+      .select('-password -refreshToken')
+      .sort({ [sortBy]: sortOrder })
+      .skip(skip)
+      .limit(limit)
+      .exec();
+
+    return {
+      data,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1,
+      },
+    };
+  }
+
+  /**
+   * Get all payments from simplified flow
+   * Supports pagination and search
+   */
+  async getAllPayments(query?: {
+    page?: number;
+    limit?: number;
+    search?: string;
+    sortBy?: string;
+    sortOrder?: 'asc' | 'desc';
+  }) {
+    const page = query?.page || 1;
+    const limit = query?.limit || 10;
+    const skip = (page - 1) * limit;
+    const sortOrder = query?.sortOrder === 'asc' ? 1 : -1;
+    const sortBy = query?.sortBy || 'paymentDate';
+
+    // Build filter
+    const filter: any = {};
+
+    // Add search filter (search in populated member fields)
+    let memberIds: any[] = [];
+    if (query?.search) {
+      const members = await this.userModel
+        .find({
+          userType: UserType.MEMBER,
+          $or: [
+            { name: { $regex: query.search, $options: 'i' } },
+            { email: { $regex: query.search, $options: 'i' } },
+            { phone: { $regex: query.search, $options: 'i' } },
+          ],
+        })
+        .select('_id')
+        .exec();
+      memberIds = members.map((m) => m._id);
+
+      if (memberIds.length > 0) {
+        filter.memberId = { $in: memberIds };
+      } else {
+        // If search found no members, also check transaction ID
+        filter.$or = [
+          { transactionId: { $regex: query.search, $options: 'i' } },
+          { notes: { $regex: query.search, $options: 'i' } },
+        ];
+      }
+    }
+
+    // Get total count for pagination metadata
+    const total = await this.memberPaymentModel.countDocuments(filter).exec();
+
+    // Get paginated results
+    const data = await this.memberPaymentModel
+      .find(filter)
+      .populate('memberId', 'name email phone')
+      .sort({ [sortBy]: sortOrder, createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .exec();
+
+    return {
+      data,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+        hasNextPage: page < Math.ceil(total / limit),
+        hasPrevPage: page > 1,
+      },
+    };
   }
 }
