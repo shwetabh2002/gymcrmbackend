@@ -1,7 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
-import * as session from 'express-session';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -9,30 +8,28 @@ async function bootstrap() {
   logger.log('🚀 Starting Backend GYM application...');
   logger.log(`📦 Node Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.log(`🔢 Node Version: ${process.version}`);
+  logger.log(`🌐 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:3001'}`);
 
   const app = await NestFactory.create(AppModule);
-
-  // Enable session
-  app.use(
-    session({
-      secret: process.env.SESSION_SECRET || 'gym-secret-key-change-in-production',
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        maxAge: undefined, // Session cookie - expires on browser close
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-      },
-    }),
-  );
-  logger.log('🔐 Session middleware enabled');
 
   // Enable CORS with credentials
   app.enableCors({
     origin: process.env.FRONTEND_URL || 'http://localhost:3001',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Requested-With',
+      'X-Employee-Password',
+      'Accept',
+      'Origin',
+      'Referer',
+      'User-Agent',
+      'sec-ch-ua',
+      'sec-ch-ua-mobile',
+      'sec-ch-ua-platform',
+    ],
   });
   logger.log('🌐 CORS enabled with credentials');
 

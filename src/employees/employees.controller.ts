@@ -9,7 +9,6 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
-  Session,
   UnauthorizedException,
 } from '@nestjs/common';
 import { EmployeesService } from './employees.service';
@@ -27,50 +26,21 @@ export class EmployeesController {
   // ===== Auth Endpoints (No EmployeeAccessGuard) =====
 
   /**
-   * Unlock employee section with password
-   * POST /employees/auth/unlock
+   * Verify employee section password
+   * POST /employees/auth/verify
    */
-  @Post('auth/unlock')
+  @Post('auth/verify')
   @HttpCode(HttpStatus.OK)
-  unlockSection(@Body() dto: UnlockEmployeeSectionDto, @Session() session: Record<string, any>) {
+  verifyPassword(@Body() dto: UnlockEmployeeSectionDto) {
     const isValid = this.employeesService.verifyPassword(dto.password);
 
     if (!isValid) {
       throw new UnauthorizedException('Invalid password');
     }
 
-    // Set session flag
-    session.employeeSectionUnlocked = true;
-
     return {
       success: true,
-      message: 'Employee section unlocked successfully',
-    };
-  }
-
-  /**
-   * Lock employee section
-   * POST /employees/auth/lock
-   */
-  @Post('auth/lock')
-  @HttpCode(HttpStatus.OK)
-  lockSection(@Session() session: Record<string, any>) {
-    session.employeeSectionUnlocked = false;
-    return {
-      success: true,
-      message: 'Employee section locked successfully',
-    };
-  }
-
-  /**
-   * Check if employee section is unlocked
-   * GET /employees/auth/status
-   */
-  @Get('auth/status')
-  @HttpCode(HttpStatus.OK)
-  checkStatus(@Session() session: Record<string, any>) {
-    return {
-      unlocked: !!session.employeeSectionUnlocked,
+      message: 'Password verified successfully',
     };
   }
 
