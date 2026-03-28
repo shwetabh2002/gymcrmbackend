@@ -3,6 +3,10 @@ import { MemberStatus } from '../../common/enums/member-status.enum';
 
 export class CreateMemberDto {
   @IsString()
+  @IsOptional()
+  idNo?: string;
+
+  @IsString()
   @IsNotEmpty()
   name: string;
 

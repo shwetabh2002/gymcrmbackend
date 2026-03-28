@@ -50,6 +50,9 @@ export class User {
   @Prop({ type: Date, default: null })
   dob: Date | null;
 
+  @Prop({ type: Date, default: null })
+  anniversaryDate: Date | null;
+
   @Prop({ type: String, default: null })
   instagramHandle: string | null;
 
@@ -77,6 +80,17 @@ export class User {
 
   @Prop({ type: Number, default: null })
   membershipAmount: number | null;
+
+  // Original amount before discount (for reference)
+  @Prop({ type: Number, default: null })
+  amount: number | null;
+
+  // Discount fields
+  @Prop({ type: Number, default: 0 })
+  discount: number;
+
+  @Prop({ type: String, default: null })
+  discountApprovedBy: string | null;
 
   // NEW: Memberships array for tracking multiple memberships
   @Prop({ type: [MembershipSchema], default: [] })

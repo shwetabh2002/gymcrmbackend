@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsDateString,
   IsEnum,
+  IsEmail,
   Min,
 } from 'class-validator';
 import { MemberStatus } from '../../common/enums/member-status.enum';
@@ -23,9 +24,17 @@ export class RegisterMemberDto {
   @IsNotEmpty()
   contactNumber: string;
 
+  @IsEmail()
+  @IsOptional()
+  email?: string;
+
   @IsDateString()
   @IsOptional()
   dob?: string;
+
+  @IsDateString()
+  @IsOptional()
+  anniversaryDate?: string;
 
   @IsString()
   @IsOptional()
@@ -101,4 +110,14 @@ export class RegisterMemberDto {
   @IsEnum(MemberStatus)
   @IsOptional()
   memberStatus?: MemberStatus;
+
+  // Discount details
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  discount?: number;
+
+  @IsString()
+  @IsOptional()
+  discountApprovedBy?: string;
 }

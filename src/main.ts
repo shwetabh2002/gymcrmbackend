@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import * as session from 'express-session';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -11,9 +12,29 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS
-  app.enableCors();
-  logger.log('🌐 CORS enabled');
+  // Enable session
+  app.use(
+    session({
+      secret: process.env.SESSION_SECRET || 'gym-secret-key-change-in-production',
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        maxAge: undefined, // Session cookie - expires on browser close
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+      },
+    }),
+  );
+  logger.log('🔐 Session middleware enabled');
+
+  // Enable CORS with credentials
+  app.enableCors({
+    origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+  logger.log('🌐 CORS enabled with credentials');
 
   // Enable global validation pipes
   app.useGlobalPipes(

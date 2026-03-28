@@ -36,9 +36,36 @@ export class MembersService {
       throw new ConflictException(`Email ${createDto.email} is already in use`);
     }
 
+    // Auto-generate idNo if not provided (format: DLF-641, DLF-642, etc.)
+    let idNo = createDto.idNo;
+    if (!idNo) {
+      // Find the last member with an idNo matching DLF- pattern
+      const lastMember = await this.userModel
+        .findOne({
+          userType: UserType.MEMBER,
+          idNo: { $exists: true, $ne: null, $regex: /^DLF-/ }
+        })
+        .sort({ createdAt: -1 })
+        .exec();
+
+      if (lastMember && lastMember.idNo) {
+        // Parse the last idNo and increment (e.g., "DLF-641" -> 641 -> 642 -> "DLF-642")
+        const match = lastMember.idNo.match(/^DLF-(\d+)$/);
+        if (match) {
+          const lastIdNum = parseInt(match[1], 10);
+          idNo = `DLF-${lastIdNum + 1}`;
+        } else {
+          idNo = 'DLF-641'; // Start from DLF-641 if last idNo doesn't match pattern
+        }
+      } else {
+        idNo = 'DLF-641'; // Start from DLF-641 if no members exist
+      }
+    }
+
     // Create member with dummy password (members don't login)
     const member = new this.userModel({
       ...createDto,
+      idNo,
       userType: UserType.MEMBER,
       role: Role.USER,
       password: 'N/A', // Members don't login, so password is not used
@@ -190,8 +217,8 @@ export class MembersService {
     member: UserDocument;
     payment: MemberPaymentDocument;
   }> {
-    // Generate email from contact number if not provided
-    const email = `member${registerDto.contactNumber}@gym.com`;
+    // Use provided email or generate from contact number
+    const email = registerDto.email || `member${registerDto.contactNumber}@gym.com`;
 
     // Check if contact number already exists
     const existingMember = await this.userModel
@@ -204,11 +231,42 @@ export class MembersService {
       );
     }
 
-    // Calculate pending amount if not provided
+    // Calculate discounted amount if discount is provided
+    const discount = registerDto.discount || 0;
+    const discountAmount = Math.round((registerDto.amount * discount / 100) * 100) / 100;
+    const finalAmount = Math.round((registerDto.amount - discountAmount) * 100) / 100;
+
+    // Calculate pending amount if not provided (using discounted finalAmount)
     const pending =
       registerDto.pending !== undefined
         ? registerDto.pending
-        : registerDto.amount - registerDto.received;
+        : Math.max(0, finalAmount - registerDto.received);
+
+    // Auto-generate idNo if not provided (format: DLF-641, DLF-642, etc.)
+    let idNo = registerDto.idNo;
+    if (!idNo) {
+      // Find the last member with an idNo matching DLF- pattern
+      const lastMember = await this.userModel
+        .findOne({
+          userType: UserType.MEMBER,
+          idNo: { $exists: true, $ne: null, $regex: /^DLF-/ }
+        })
+        .sort({ createdAt: -1 })
+        .exec();
+
+      if (lastMember && lastMember.idNo) {
+        // Parse the last idNo and increment (e.g., "DLF-641" -> 641 -> 642 -> "DLF-642")
+        const match = lastMember.idNo.match(/^DLF-(\d+)$/);
+        if (match) {
+          const lastIdNum = parseInt(match[1], 10);
+          idNo = `DLF-${lastIdNum + 1}`;
+        } else {
+          idNo = 'DLF-641'; // Start from DLF-641 if last idNo doesn't match pattern
+        }
+      } else {
+        idNo = 'DLF-641'; // Start from DLF-641 if no members exist
+      }
+    }
 
     // Create member with all details
     const member = new this.userModel({
@@ -224,26 +282,30 @@ export class MembersService {
       memberStatus: registerDto.memberStatus || MemberStatus.ACTIVE,
 
       // New simplified flow fields
-      idNo: registerDto.idNo,
+      idNo: idNo,
       dob: registerDto.dob ? new Date(registerDto.dob) : null,
+      anniversaryDate: registerDto.anniversaryDate ? new Date(registerDto.anniversaryDate) : null,
       instagramHandle: registerDto.instagramHandle,
       salesPerson: registerDto.salesPerson,
       trainer: registerDto.trainer,
       trainingType: registerDto.trainingType,
       memberType: registerDto.memberType,
+      discount: registerDto.discount || 0,
+      discountApprovedBy: registerDto.discountApprovedBy,
 
       // Membership details (legacy fields - kept for backward compatibility)
       membershipMonths: registerDto.membershipMonths,
       startingDate: new Date(registerDto.startingDate),
       expiryDate: new Date(registerDto.expiryDate),
-      membershipAmount: registerDto.amount,
+      membershipAmount: finalAmount, // Use discounted amount
+      amount: registerDto.amount, // Store original amount for reference
 
       // NEW: Create first membership in memberships array
       memberships: [{
         startDate: new Date(registerDto.startingDate),
         expiryDate: new Date(registerDto.expiryDate),
         months: registerDto.membershipMonths,
-        totalAmount: registerDto.amount,
+        totalAmount: finalAmount, // Use discounted amount
         amountPaid: registerDto.received,
         pendingAmount: pending,
         status: 'ACTIVE',
@@ -261,13 +323,15 @@ export class MembersService {
     const payment = new this.memberPaymentModel({
       memberId: savedMember._id,
       membershipId: savedMember.memberships[0]._id, // Link to first membership
-      amount: registerDto.amount,
+      amount: finalAmount, // Use discounted amount
       received: registerDto.received,
       pending: pending,
       mop: registerDto.mop,
       paymentDate: new Date(registerDto.date),
       transactionId: registerDto.transactionId,
-      notes: `Initial payment for ${registerDto.membershipMonths} months membership`,
+      notes: discount > 0
+        ? `Initial payment for ${registerDto.membershipMonths} months membership (${discount}% discount applied)`
+        : `Initial payment for ${registerDto.membershipMonths} months membership`,
     });
 
     const savedPayment = await payment.save();
@@ -619,7 +683,7 @@ export class MembersService {
     // Get paginated results
     const data = await this.memberPaymentModel
       .find(filter)
-      .populate('memberId', 'name email phone')
+      .populate('memberId', 'name email phone discount discountApprovedBy membershipPlan membershipMonths instagramHandle amount')
       .sort({ [sortBy]: sortOrder, createdAt: -1 })
       .skip(skip)
       .limit(limit)

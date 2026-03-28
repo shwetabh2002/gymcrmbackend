@@ -11,6 +11,7 @@ import { MemberSubscriptionsModule } from './member-subscriptions/member-subscri
 import { PaymentsModule } from './payments/payments.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { EmployeesModule } from './employees/employees.module';
 
 @Module({
   imports: [
@@ -70,6 +71,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
     PaymentsModule,
     InvoicesModule,
     AnalyticsModule,
+    EmployeesModule,
   ],
   controllers: [AppController],
   providers: [AppService],

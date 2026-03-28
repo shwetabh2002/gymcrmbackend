@@ -29,6 +29,11 @@ export class AnalyticsService {
   /**
    * Get dashboard overview with key metrics and detailed lists
    * Supports optional date filtering: startDate/endDate, or month/year
+   *
+   * DISCOUNT-AWARE REVENUE CALCULATION:
+   * - Simplified flow: Uses 'received' field from MemberPayment (already post-discount)
+   * - Detailed flow: Uses 'amount' field from Payment (should be post-discount when recorded)
+   * - All revenue metrics reflect actual collected amounts after discounts
    */
   async getDashboardOverview(
     startDate?: string,
@@ -298,6 +303,33 @@ export class AnalyticsService {
       .limit(10)
       .exec();
 
+    // ===== DISCOUNT ANALYTICS =====
+    // Calculate total discount given across all members
+    const membersWithDiscount = await this.userModel
+      .find({
+        userType: UserType.MEMBER,
+        discount: { $exists: true, $gt: 0 },
+      })
+      .select('amount discount discountApprovedBy')
+      .exec();
+
+    let totalDiscountGiven = 0;
+    let discountedMembersCount = 0;
+    const discountByApprover: Record<string, number> = {};
+
+    for (const member of membersWithDiscount) {
+      const amount = member.amount || 0;
+      const discount = member.discount || 0;
+      const discountAmount = (amount * discount) / 100;
+
+      totalDiscountGiven += discountAmount;
+      discountedMembersCount++;
+
+      // Track discount by approver
+      const approver = member.discountApprovedBy || 'Unknown';
+      discountByApprover[approver] = (discountByApprover[approver] || 0) + discountAmount;
+    }
+
     return {
       // Counts
       counts: {
@@ -309,6 +341,16 @@ export class AnalyticsService {
         membersNearExpiry: membersNearExpiry.length,
         membersWithPendingPayments: membersWithPendingPayments.length,
         newMembersThisMonth: newMembers.length,
+        totalDiscountGiven,
+        discountedMembersCount,
+      },
+
+      // Discount analytics
+      discountAnalytics: {
+        totalDiscountGiven,
+        discountedMembersCount,
+        discountByApprover,
+        averageDiscountPerMember: discountedMembersCount > 0 ? totalDiscountGiven / discountedMembersCount : 0,
       },
 
       // Detailed Lists
@@ -390,6 +432,11 @@ export class AnalyticsService {
 
   /**
    * Get revenue analytics (BOTH flows combined)
+   *
+   * DISCOUNT-AWARE REVENUE:
+   * - All revenue calculations use actual received/paid amounts (post-discount)
+   * - Simplified flow: $sum on 'received' field
+   * - Detailed flow: $sum on 'amount' field (should already be discounted when payment is recorded)
    */
   async getRevenueAnalytics() {
     const now = new Date();
@@ -747,6 +794,11 @@ export class AnalyticsService {
 
   /**
    * Get payment trends (last 6 months) from BOTH flows
+   *
+   * DISCOUNT-AWARE REVENUE TRENDS:
+   * - Revenue trends show actual collected amounts (post-discount)
+   * - Simplified flow: Aggregates 'received' field
+   * - Detailed flow: Aggregates 'amount' field
    */
   async getPaymentTrends() {
     const now = new Date();
