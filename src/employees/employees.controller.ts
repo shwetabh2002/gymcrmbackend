@@ -60,9 +60,10 @@ export class EmployeesController {
   /**
    * Get all employees
    * GET /employees
+   * Note: Public for admins (JWT required) - no password needed for read access
+   * This allows member forms to populate sales/trainer dropdowns
    */
   @Get()
-  @UseGuards(EmployeeAccessGuard)
   @HttpCode(HttpStatus.OK)
   async findAll() {
     return this.employeesService.findAll();
@@ -71,9 +72,9 @@ export class EmployeesController {
   /**
    * Get employee by ID
    * GET /employees/:id
+   * Note: Public for admins (JWT required) - no password needed for read access
    */
   @Get(':id')
-  @UseGuards(EmployeeAccessGuard)
   @HttpCode(HttpStatus.OK)
   async findById(@Param('id') id: string) {
     return this.employeesService.findById(id);

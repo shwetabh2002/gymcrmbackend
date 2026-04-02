@@ -18,6 +18,9 @@ import {
   MemberPaymentDocument,
 } from './schemas/member-payment.schema';
 import { MembersImportService } from './members-import.service';
+import { Employee, EmployeeDocument } from '../employees/schemas/employee.schema';
+import { EmployeeType } from '../common/enums/employee-type.enum';
+import { EmployeeStatus } from '../common/enums/employee-status.enum';
 
 @Injectable()
 export class MembersService {
@@ -26,6 +29,8 @@ export class MembersService {
     private userModel: Model<UserDocument>,
     @InjectModel(MemberPayment.name)
     private memberPaymentModel: Model<MemberPaymentDocument>,
+    @InjectModel(Employee.name)
+    private employeeModel: Model<EmployeeDocument>,
     private membersImportService: MembersImportService,
   ) {}
 
@@ -746,6 +751,48 @@ export class MembersService {
           });
           results.failed++;
           continue;
+        }
+
+        // Validate salesPerson if provided
+        if (memberData.salesPerson) {
+          const salesEmployee = await this.employeeModel
+            .findOne({
+              name: memberData.salesPerson,
+              employeeType: EmployeeType.SALES,
+              status: EmployeeStatus.ACTIVE,
+            })
+            .exec();
+
+          if (!salesEmployee) {
+            results.errors.push({
+              row: rowNumber,
+              name: memberData.name,
+              error: `Sales person "${memberData.salesPerson}" not found or not active`,
+            });
+            results.failed++;
+            continue;
+          }
+        }
+
+        // Validate trainer if provided
+        if (memberData.trainer) {
+          const trainerEmployee = await this.employeeModel
+            .findOne({
+              name: memberData.trainer,
+              employeeType: EmployeeType.TRAINER,
+              status: EmployeeStatus.ACTIVE,
+            })
+            .exec();
+
+          if (!trainerEmployee) {
+            results.errors.push({
+              row: rowNumber,
+              name: memberData.name,
+              error: `Trainer "${memberData.trainer}" not found or not active`,
+            });
+            results.failed++;
+            continue;
+          }
         }
 
         // Extract membership months from package

@@ -8,12 +8,14 @@ import {
   MemberPayment,
   MemberPaymentSchema,
 } from './schemas/member-payment.schema';
+import { Employee, EmployeeSchema } from '../employees/schemas/employee.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: MemberPayment.name, schema: MemberPaymentSchema },
+      { name: Employee.name, schema: EmployeeSchema },
     ]),
   ],
   providers: [MembersService, MembersImportService],
