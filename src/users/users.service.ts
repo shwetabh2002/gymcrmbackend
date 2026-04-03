@@ -25,6 +25,10 @@ export class UsersService {
     await this.userModel.findByIdAndUpdate(userId, { refreshToken }).exec();
   }
 
+  async updatePassword(userId: string, hashedPassword: string): Promise<void> {
+    await this.userModel.findByIdAndUpdate(userId, { password: hashedPassword }).exec();
+  }
+
   async create(userData: Partial<User>): Promise<UserDocument> {
     const user = new this.userModel(userData);
     return user.save();

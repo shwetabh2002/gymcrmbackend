@@ -31,12 +31,45 @@ export class EmployeesService {
       throw new ConflictException(`Employee with email ${createDto.email} already exists`);
     }
 
+    // Auto-generate Employee ID
+    const employeeId = await this.generateEmployeeId();
+
     const employee = new this.employeeModel({
       ...createDto,
+      employeeId,
       joiningDate: new Date(createDto.joiningDate),
+      ...(createDto.dob && { dob: new Date(createDto.dob) }),
+      ...(createDto.anniversaryDate && { anniversaryDate: new Date(createDto.anniversaryDate) }),
     });
 
     return employee.save();
+  }
+
+  /**
+   * Generate next Employee ID (EMP-001, EMP-002, etc.)
+   */
+  private async generateEmployeeId(): Promise<string> {
+    // Find the latest employee by sorting employeeId in descending order
+    const lastEmployee = await this.employeeModel
+      .findOne()
+      .sort({ employeeId: -1 })
+      .exec();
+
+    if (!lastEmployee || !lastEmployee.employeeId) {
+      return 'EMP-001';
+    }
+
+    // Extract number from last ID (e.g., "EMP-005" -> 5)
+    const match = lastEmployee.employeeId.match(/EMP-(\d+)/);
+    if (!match) {
+      return 'EMP-001';
+    }
+
+    const lastNumber = parseInt(match[1], 10);
+    const nextNumber = lastNumber + 1;
+
+    // Pad with zeros (e.g., 6 -> "006")
+    return `EMP-${String(nextNumber).padStart(3, '0')}`;
   }
 
   async findAll(): Promise<EmployeeDocument[]> {
@@ -72,6 +105,8 @@ export class EmployeesService {
         {
           ...updateDto,
           ...(updateDto.joiningDate && { joiningDate: new Date(updateDto.joiningDate) }),
+          ...(updateDto.dob && { dob: new Date(updateDto.dob) }),
+          ...(updateDto.anniversaryDate && { anniversaryDate: new Date(updateDto.anniversaryDate) }),
         },
         { new: true }
       )
@@ -89,5 +124,53 @@ export class EmployeesService {
     if (!result) {
       throw new NotFoundException(`Employee with ID ${id} not found`);
     }
+  }
+
+  /**
+   * Get employees with birthdays tomorrow
+   */
+  async getUpcomingBirthdays(): Promise<EmployeeDocument[]> {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowMonth = tomorrow.getMonth() + 1; // 1-12
+    const tomorrowDay = tomorrow.getDate();
+
+    const allEmployees = await this.employeeModel
+      .find({ status: 'ACTIVE', dob: { $exists: true, $ne: null } })
+      .exec();
+
+    return allEmployees.filter(emp => {
+      if (!emp.dob) return false;
+      const dobDate = new Date(emp.dob);
+      const empMonth = dobDate.getMonth() + 1;
+      const empDay = dobDate.getDate();
+      return empMonth === tomorrowMonth && empDay === tomorrowDay;
+    });
+  }
+
+  /**
+   * Get employees with anniversaries tomorrow
+   */
+  async getUpcomingAnniversaries(): Promise<EmployeeDocument[]> {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowMonth = tomorrow.getMonth() + 1; // 1-12
+    const tomorrowDay = tomorrow.getDate();
+
+    const allEmployees = await this.employeeModel
+      .find({
+        status: 'ACTIVE',
+        isMarried: true,
+        anniversaryDate: { $exists: true, $ne: null }
+      })
+      .exec();
+
+    return allEmployees.filter(emp => {
+      if (!emp.anniversaryDate) return false;
+      const annDate = new Date(emp.anniversaryDate);
+      const annMonth = annDate.getMonth() + 1;
+      const annDay = annDate.getDate();
+      return annMonth === tomorrowMonth && annDay === tomorrowDay;
+    });
   }
 }

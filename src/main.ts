@@ -12,9 +12,9 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS with credentials
+  // Enable CORS with credentials - Allow all origins
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+    origin: true, // Allow all origins
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
@@ -31,7 +31,7 @@ async function bootstrap() {
       'sec-ch-ua-platform',
     ],
   });
-  logger.log('🌐 CORS enabled with credentials');
+  logger.log('🌐 CORS enabled - All origins allowed');
 
   // Enable global validation pipes
   app.useGlobalPipes(
