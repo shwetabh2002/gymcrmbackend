@@ -39,6 +39,12 @@ async function bootstrap() {
       whitelist: true,
       forbidNonWhitelisted: true,
       transform: true,
+      skipMissingProperties: false,
+      skipNullProperties: false,
+      skipUndefinedProperties: false,
+      transformOptions: {
+        enableImplicitConversion: true,
+      },
     }),
   );
   logger.log('✅ Global validation pipes enabled');
