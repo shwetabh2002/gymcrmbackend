@@ -12,9 +12,31 @@ async function bootstrap() {
 
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS with credentials - Allow all origins
+  // Enable CORS with credentials
+  // When credentials: true, we MUST use a function or specific origins (not wildcard)
+  const allowedOrigins = [
+    'http://localhost:3000',
+    'http://localhost:3001',
+    'http://localhost:5173',
+    'https://gymcrmfrontend.onrender.com',
+    'https://crm.crmdalyfstylefitness.in',
+    'https://crmdalyfstylefitness.in',
+  ];
+
   app.enableCors({
-    origin: true, // Allow all origins
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, Postman, curl)
+      if (!origin) return callback(null, true);
+
+      // Check if origin is in allowed list
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // Log rejected origins for debugging
+      logger.warn(`🚫 CORS blocked origin: ${origin}`);
+      callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: [
@@ -30,8 +52,10 @@ async function bootstrap() {
       'sec-ch-ua-mobile',
       'sec-ch-ua-platform',
     ],
+    exposedHeaders: ['Authorization'],
+    maxAge: 86400, // 24 hours
   });
-  logger.log('🌐 CORS enabled - All origins allowed');
+  logger.log(`🌐 CORS enabled for ${allowedOrigins.length} origins`);
 
   // Enable global validation pipes
   app.useGlobalPipes(
