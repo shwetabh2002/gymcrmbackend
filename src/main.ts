@@ -21,6 +21,8 @@ async function bootstrap() {
     'https://gymcrmfrontend.onrender.com',
     'https://crm.crmdalyfstylefitness.in',
     'https://crmdalyfstylefitness.in',
+    'http://13.233.134.248',
+    'https://13.233.134.248',
   ];
 
   app.enableCors({
