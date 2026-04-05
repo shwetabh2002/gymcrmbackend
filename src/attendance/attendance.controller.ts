@@ -41,6 +41,21 @@ export class AttendanceController {
   }
 
   /**
+   * Alternative endpoint for ADMS mode devices
+   * POST /attendance/cdata
+   *
+   * Many ESSL devices in ADMS mode push to /cdata endpoint
+   */
+  @Post('cdata')
+  @HttpCode(HttpStatus.OK)
+  async receiveADMSData(@Body() data: any, @Req() req: any) {
+    this.logger.log(`📥 ADMS data received from IP: ${req.ip}`);
+    this.logger.debug(`ADMS Data: ${JSON.stringify(data)}`);
+
+    return this.attendanceService.processPushData(data, req.ip);
+  }
+
+  /**
    * Get all attendance records with filters
    * GET /attendance?employeeId=xxx&month=2026-04
    */
