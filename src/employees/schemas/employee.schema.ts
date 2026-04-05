@@ -64,6 +64,10 @@ export class Employee {
   // Trainer Certificate (only for TRAINER type)
   @Prop()
   trainerCertificateNumber: string;
+
+  // Biometric Device Integration
+  @Prop()
+  deviceUserId: string; // User ID in fingerprint device (e.g., "1", "2", "3")
 }
 
 export const EmployeeSchema = SchemaFactory.createForClass(Employee);

@@ -12,6 +12,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { EmployeesModule } from './employees/employees.module';
+import { AttendanceModule } from './attendance/attendance.module';
 
 @Module({
   imports: [
@@ -72,6 +73,7 @@ import { EmployeesModule } from './employees/employees.module';
     InvoicesModule,
     AnalyticsModule,
     EmployeesModule,
+    AttendanceModule,
   ],
   controllers: [AppController],
   providers: [AppService],

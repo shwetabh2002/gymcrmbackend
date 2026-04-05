@@ -127,6 +127,13 @@ export class EmployeesService {
   }
 
   /**
+   * Find employee by device user ID (for biometric integration)
+   */
+  async findByDeviceUserId(deviceUserId: string): Promise<EmployeeDocument | null> {
+    return this.employeeModel.findOne({ deviceUserId }).exec();
+  }
+
+  /**
    * Get employees with birthdays tomorrow
    */
   async getUpcomingBirthdays(): Promise<EmployeeDocument[]> {

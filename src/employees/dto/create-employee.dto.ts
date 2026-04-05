@@ -83,4 +83,10 @@ export class CreateEmployeeDto {
   @EmptyStringToUndefined()
   @IsString()
   trainerCertificateNumber?: string;
+
+  // Biometric Device Integration
+  @IsOptional()
+  @EmptyStringToUndefined()
+  @IsString()
+  deviceUserId?: string; // User ID in fingerprint device (e.g., "1", "2", "3")
 }
