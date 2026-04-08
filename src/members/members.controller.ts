@@ -100,6 +100,28 @@ export class MembersController {
     return this.membersService.importFromExcel(file.buffer);
   }
 
+  /**
+   * Dashboard: members with birthday today or tomorrow (JWT only)
+   * GET /members/upcoming-birthdays
+   */
+  @Get('upcoming-birthdays')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getUpcomingBirthdays() {
+    return this.membersService.getUpcomingBirthdays();
+  }
+
+  /**
+   * Dashboard: members with anniversary today or tomorrow (JWT only)
+   * GET /members/upcoming-anniversaries
+   */
+  @Get('upcoming-anniversaries')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getUpcomingAnniversaries() {
+    return this.membersService.getUpcomingAnniversaries();
+  }
+
   @Get(':id')
   @HttpCode(HttpStatus.OK)
   async findById(@Param('id') id: string) {

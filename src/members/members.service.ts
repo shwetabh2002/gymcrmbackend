@@ -21,6 +21,10 @@ import { MembersImportService } from './members-import.service';
 import { Employee, EmployeeDocument } from '../employees/schemas/employee.schema';
 import { EmployeeType } from '../common/enums/employee-type.enum';
 import { EmployeeStatus } from '../common/enums/employee-status.enum';
+import {
+  isMonthDayTodayOrTomorrow,
+  todayOrTomorrowOrder,
+} from '../common/utils/upcoming-celebration.util';
 
 @Injectable()
 export class MembersService {
@@ -876,5 +880,71 @@ export class MembersService {
     }
 
     return results;
+  }
+
+  /**
+   * Active members with birthday today or tomorrow (same calendar logic as employees).
+   */
+  async getUpcomingBirthdays(): Promise<UserDocument[]> {
+    const ref = new Date();
+    const members = await this.userModel
+      .find({
+        userType: UserType.MEMBER,
+        memberStatus: MemberStatus.ACTIVE,
+        dob: { $exists: true, $ne: null },
+      })
+      .exec();
+
+    return members
+      .filter((m) => {
+        if (!m.dob) return false;
+        const dobDate = new Date(m.dob);
+        return isMonthDayTodayOrTomorrow(
+          dobDate.getMonth() + 1,
+          dobDate.getDate(),
+          ref,
+        );
+      })
+      .sort((a, b) => {
+        const da = new Date(a.dob!);
+        const db = new Date(b.dob!);
+        const oa = todayOrTomorrowOrder(da.getMonth() + 1, da.getDate(), ref);
+        const ob = todayOrTomorrowOrder(db.getMonth() + 1, db.getDate(), ref);
+        if (oa !== ob) return oa - ob;
+        return a.name.localeCompare(b.name);
+      });
+  }
+
+  /**
+   * Active members with anniversary today or tomorrow (no isMarried flag on users).
+   */
+  async getUpcomingAnniversaries(): Promise<UserDocument[]> {
+    const ref = new Date();
+    const members = await this.userModel
+      .find({
+        userType: UserType.MEMBER,
+        memberStatus: MemberStatus.ACTIVE,
+        anniversaryDate: { $exists: true, $ne: null },
+      })
+      .exec();
+
+    return members
+      .filter((m) => {
+        if (!m.anniversaryDate) return false;
+        const annDate = new Date(m.anniversaryDate);
+        return isMonthDayTodayOrTomorrow(
+          annDate.getMonth() + 1,
+          annDate.getDate(),
+          ref,
+        );
+      })
+      .sort((a, b) => {
+        const da = new Date(a.anniversaryDate!);
+        const db = new Date(b.anniversaryDate!);
+        const oa = todayOrTomorrowOrder(da.getMonth() + 1, da.getDate(), ref);
+        const ob = todayOrTomorrowOrder(db.getMonth() + 1, db.getDate(), ref);
+        if (oa !== ob) return oa - ob;
+        return a.name.localeCompare(b.name);
+      });
   }
 }

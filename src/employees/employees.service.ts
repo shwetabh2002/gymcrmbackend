@@ -5,6 +5,10 @@ import { ConfigService } from '@nestjs/config';
 import { Employee, EmployeeDocument } from './schemas/employee.schema';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import {
+  isMonthDayTodayOrTomorrow,
+  todayOrTomorrowOrder,
+} from '../common/utils/upcoming-celebration.util';
 
 @Injectable()
 export class EmployeesService {
@@ -134,50 +138,64 @@ export class EmployeesService {
   }
 
   /**
-   * Get employees with birthdays tomorrow
+   * Get employees with birthdays today or tomorrow (server local date).
    */
   async getUpcomingBirthdays(): Promise<EmployeeDocument[]> {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowMonth = tomorrow.getMonth() + 1; // 1-12
-    const tomorrowDay = tomorrow.getDate();
-
+    const ref = new Date();
     const allEmployees = await this.employeeModel
       .find({ status: 'ACTIVE', dob: { $exists: true, $ne: null } })
       .exec();
 
-    return allEmployees.filter(emp => {
-      if (!emp.dob) return false;
-      const dobDate = new Date(emp.dob);
-      const empMonth = dobDate.getMonth() + 1;
-      const empDay = dobDate.getDate();
-      return empMonth === tomorrowMonth && empDay === tomorrowDay;
-    });
+    return allEmployees
+      .filter((emp) => {
+        if (!emp.dob) return false;
+        const dobDate = new Date(emp.dob);
+        return isMonthDayTodayOrTomorrow(
+          dobDate.getMonth() + 1,
+          dobDate.getDate(),
+          ref,
+        );
+      })
+      .sort((a, b) => {
+        const da = new Date(a.dob!);
+        const db = new Date(b.dob!);
+        const oa = todayOrTomorrowOrder(da.getMonth() + 1, da.getDate(), ref);
+        const ob = todayOrTomorrowOrder(db.getMonth() + 1, db.getDate(), ref);
+        if (oa !== ob) return oa - ob;
+        return a.name.localeCompare(b.name);
+      });
   }
 
   /**
-   * Get employees with anniversaries tomorrow
+   * Get employees with anniversaries today or tomorrow (server local date).
    */
   async getUpcomingAnniversaries(): Promise<EmployeeDocument[]> {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowMonth = tomorrow.getMonth() + 1; // 1-12
-    const tomorrowDay = tomorrow.getDate();
-
+    const ref = new Date();
     const allEmployees = await this.employeeModel
       .find({
         status: 'ACTIVE',
         isMarried: true,
-        anniversaryDate: { $exists: true, $ne: null }
+        anniversaryDate: { $exists: true, $ne: null },
       })
       .exec();
 
-    return allEmployees.filter(emp => {
-      if (!emp.anniversaryDate) return false;
-      const annDate = new Date(emp.anniversaryDate);
-      const annMonth = annDate.getMonth() + 1;
-      const annDay = annDate.getDate();
-      return annMonth === tomorrowMonth && annDay === tomorrowDay;
-    });
+    return allEmployees
+      .filter((emp) => {
+        if (!emp.anniversaryDate) return false;
+        const annDate = new Date(emp.anniversaryDate);
+        return isMonthDayTodayOrTomorrow(
+          annDate.getMonth() + 1,
+          annDate.getDate(),
+          ref,
+        );
+      })
+      .sort((a, b) => {
+        const da = new Date(a.anniversaryDate!);
+        const db = new Date(b.anniversaryDate!);
+        const oa = todayOrTomorrowOrder(da.getMonth() + 1, da.getDate(), ref);
+        const ob = todayOrTomorrowOrder(db.getMonth() + 1, db.getDate(), ref);
+        if (oa !== ob) return oa - ob;
+        return a.name.localeCompare(b.name);
+      });
   }
 }

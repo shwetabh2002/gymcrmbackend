@@ -58,7 +58,7 @@ export class EmployeesController {
   }
 
   /**
-   * Get upcoming birthdays (tomorrow)
+   * Get upcoming birthdays (today & tomorrow, server local date)
    * GET /employees/upcoming-birthdays
    */
   @Get('upcoming-birthdays')
@@ -68,7 +68,7 @@ export class EmployeesController {
   }
 
   /**
-   * Get upcoming anniversaries (tomorrow)
+   * Get upcoming anniversaries (today & tomorrow, server local date)
    * GET /employees/upcoming-anniversaries
    */
   @Get('upcoming-anniversaries')
