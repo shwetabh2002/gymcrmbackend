@@ -111,7 +111,12 @@ export class RegisterMemberDto {
   @IsOptional()
   memberStatus?: MemberStatus;
 
-  // Discount details
+  // Discount details — `discountAmount` (₹) preferred; `discount` (%) legacy
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  discountAmount?: number;
+
   @IsNumber()
   @IsOptional()
   @Min(0)

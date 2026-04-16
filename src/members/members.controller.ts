@@ -22,6 +22,7 @@ import { RegisterMemberDto } from './dto/register-member.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { ParseObjectIdPipe } from '@nestjs/mongoose';
 
 @Controller('members')
 export class MembersController {
@@ -37,6 +38,23 @@ export class MembersController {
   @HttpCode(HttpStatus.OK)
   async findAll() {
     return this.membersService.findAll();
+  }
+
+  /**
+   * Static paths MUST be declared before @Get(':id') or Express matches :id = "upcoming-birthdays".
+   */
+  @Get('upcoming-birthdays')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getUpcomingBirthdays() {
+    return this.membersService.getUpcomingBirthdays();
+  }
+
+  @Get('upcoming-anniversaries')
+  @UseGuards(JwtAuthGuard)
+  @HttpCode(HttpStatus.OK)
+  async getUpcomingAnniversaries() {
+    return this.membersService.getUpcomingAnniversaries();
   }
 
   // === New Simplified Flow Endpoints (must be before :id routes) ===
@@ -101,53 +119,33 @@ export class MembersController {
   }
 
   /**
-   * Dashboard: members with birthday today or tomorrow (JWT only)
-   * GET /members/upcoming-birthdays
+   * Dynamic :id routes last — see upcoming-birthdays above.
    */
-  @Get('upcoming-birthdays')
-  @UseGuards(JwtAuthGuard)
+  @Get(':id/payments')
   @HttpCode(HttpStatus.OK)
-  async getUpcomingBirthdays() {
-    return this.membersService.getUpcomingBirthdays();
-  }
-
-  /**
-   * Dashboard: members with anniversary today or tomorrow (JWT only)
-   * GET /members/upcoming-anniversaries
-   */
-  @Get('upcoming-anniversaries')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  async getUpcomingAnniversaries() {
-    return this.membersService.getUpcomingAnniversaries();
+  async getMemberPayments(@Param('id', ParseObjectIdPipe) id: string) {
+    return this.membersService.getMemberPayments(id);
   }
 
   @Get(':id')
   @HttpCode(HttpStatus.OK)
-  async findById(@Param('id') id: string) {
+  async findById(@Param('id', ParseObjectIdPipe) id: string) {
     return this.membersService.findById(id);
   }
 
   @Put(':id')
   @HttpCode(HttpStatus.OK)
-  async update(@Param('id') id: string, @Body() updateDto: UpdateMemberDto) {
+  async update(
+    @Param('id', ParseObjectIdPipe) id: string,
+    @Body() updateDto: UpdateMemberDto,
+  ) {
     return this.membersService.update(id, updateDto);
   }
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  async delete(@Param('id') id: string) {
+  async delete(@Param('id', ParseObjectIdPipe) id: string) {
     await this.membersService.delete(id);
     return { message: 'Member deleted successfully' };
-  }
-
-  /**
-   * Get all payments for a specific member
-   * GET /members/:id/payments
-   */
-  @Get(':id/payments')
-  @HttpCode(HttpStatus.OK)
-  async getMemberPayments(@Param('id') id: string) {
-    return this.membersService.getMemberPayments(id);
   }
 }

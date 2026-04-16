@@ -25,6 +25,7 @@ import {
   isMonthDayTodayOrTomorrow,
   todayOrTomorrowOrder,
 } from '../common/utils/upcoming-celebration.util';
+import { computeMemberDiscount } from '../common/utils/member-discount.util';
 
 @Injectable()
 export class MembersService {
@@ -39,12 +40,6 @@ export class MembersService {
   ) {}
 
   async create(createDto: CreateMemberDto): Promise<UserDocument> {
-    // Check if email already exists
-    const existingUser = await this.userModel.findOne({ email: createDto.email }).exec();
-    if (existingUser) {
-      throw new ConflictException(`Email ${createDto.email} is already in use`);
-    }
-
     // Auto-generate idNo if not provided (format: DLF-641, DLF-642, etc.)
     let idNo = createDto.idNo;
     if (!idNo) {
@@ -170,21 +165,21 @@ export class MembersService {
   }
 
   async update(id: string, updateDto: UpdateMemberDto): Promise<UserDocument> {
-    // If email is being updated, check for conflicts
-    if (updateDto.email) {
-      const existingUser = await this.userModel
-        .findOne({ email: updateDto.email, _id: { $ne: id } })
-        .exec();
-
-      if (existingUser) {
-        throw new ConflictException(`Email ${updateDto.email} is already in use`);
-      }
+    const { contactNumber, phone, ...rest } = updateDto;
+    const payload: Record<string, unknown> = { ...rest };
+    const resolvedPhone = phone ?? contactNumber;
+    if (resolvedPhone !== undefined) {
+      payload.phone = resolvedPhone;
+    }
+    if (payload.discountAmount === 0) {
+      payload.discountAmount = null;
+      payload.discount = 0;
     }
 
     const member = await this.userModel
       .findOneAndUpdate(
         { _id: id, userType: UserType.MEMBER },
-        updateDto,
+        payload,
         { new: true },
       )
       .select('-password -refreshToken')
@@ -240,10 +235,12 @@ export class MembersService {
       );
     }
 
-    // Calculate discounted amount if discount is provided
-    const discount = registerDto.discount || 0;
-    const discountAmount = Math.round((registerDto.amount * discount / 100) * 100) / 100;
-    const finalAmount = Math.round((registerDto.amount - discountAmount) * 100) / 100;
+    const { rupeesOff, finalAmount, usedAmountDiscount } = computeMemberDiscount(
+      registerDto.amount,
+      registerDto.discount,
+      registerDto.discountAmount ?? null,
+    );
+    const legacyPercent = registerDto.discount || 0;
 
     // Calculate pending amount if not provided (using discounted finalAmount)
     const pending =
@@ -299,7 +296,8 @@ export class MembersService {
       trainer: registerDto.trainer,
       trainingType: registerDto.trainingType,
       memberType: registerDto.memberType,
-      discount: registerDto.discount || 0,
+      discount: usedAmountDiscount ? 0 : legacyPercent,
+      discountAmount: usedAmountDiscount ? rupeesOff : null,
       discountApprovedBy: registerDto.discountApprovedBy,
 
       // Membership details (legacy fields - kept for backward compatibility)
@@ -338,9 +336,12 @@ export class MembersService {
       mop: registerDto.mop,
       paymentDate: new Date(registerDto.date),
       transactionId: registerDto.transactionId,
-      notes: discount > 0
-        ? `Initial payment for ${registerDto.membershipMonths} months membership (${discount}% discount applied)`
-        : `Initial payment for ${registerDto.membershipMonths} months membership`,
+      notes:
+        rupeesOff > 0
+          ? usedAmountDiscount
+            ? `Initial payment for ${registerDto.membershipMonths} months membership (₹${rupeesOff} discount applied)`
+            : `Initial payment for ${registerDto.membershipMonths} months membership (${legacyPercent}% discount applied)`
+          : `Initial payment for ${registerDto.membershipMonths} months membership`,
     });
 
     const savedPayment = await payment.save();

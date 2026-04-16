@@ -9,7 +9,8 @@ export type UserDocument = User & Document;
 
 @Schema({ timestamps: true })
 export class User {
-  @Prop({ required: true, unique: true })
+  /** Not globally unique — multiple members may share an email; admin login matches by role. */
+  @Prop({ required: true })
   email: string;
 
   @Prop({ required: true })
@@ -85,9 +86,12 @@ export class User {
   @Prop({ type: Number, default: null })
   amount: number | null;
 
-  // Discount fields
+  // Discount fields — `discount` = legacy % off list price; `discountAmount` = ₹ off (preferred when set)
   @Prop({ type: Number, default: 0 })
   discount: number;
+
+  @Prop({ type: Number, default: null })
+  discountAmount: number | null;
 
   @Prop({ type: String, default: null })
   discountApprovedBy: string | null;

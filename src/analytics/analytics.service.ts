@@ -14,6 +14,7 @@ import {
 import { UserType } from '../common/enums/user-type.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PaymentStatus } from '../common/enums/payment-status.enum';
+import { memberDiscountRupeesForAnalytics } from '../common/utils/member-discount.util';
 
 @Injectable()
 export class AnalyticsService {
@@ -308,9 +309,12 @@ export class AnalyticsService {
     const membersWithDiscount = await this.userModel
       .find({
         userType: UserType.MEMBER,
-        discount: { $exists: true, $gt: 0 },
+        $or: [
+          { discount: { $gt: 0 } },
+          { discountAmount: { $gt: 0 } },
+        ],
       })
-      .select('amount discount discountApprovedBy')
+      .select('amount discount discountAmount discountApprovedBy')
       .exec();
 
     let totalDiscountGiven = 0;
@@ -318,16 +322,14 @@ export class AnalyticsService {
     const discountByApprover: Record<string, number> = {};
 
     for (const member of membersWithDiscount) {
-      const amount = member.amount || 0;
-      const discount = member.discount || 0;
-      const discountAmount = (amount * discount) / 100;
+      const rupees = memberDiscountRupeesForAnalytics(member);
 
-      totalDiscountGiven += discountAmount;
+      totalDiscountGiven += rupees;
       discountedMembersCount++;
 
       // Track discount by approver
       const approver = member.discountApprovedBy || 'Unknown';
-      discountByApprover[approver] = (discountByApprover[approver] || 0) + discountAmount;
+      discountByApprover[approver] = (discountByApprover[approver] || 0) + rupees;
     }
 
     return {

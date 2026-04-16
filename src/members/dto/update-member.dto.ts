@@ -101,7 +101,12 @@ export class UpdateMemberDto {
   @IsOptional()
   memberStatus?: MemberStatus;
 
-  // Discount Info
+  // Discount Info — `discountAmount` (₹) preferred; `discount` (%) legacy
+  @IsNumber()
+  @IsOptional()
+  @Min(0)
+  discountAmount?: number;
+
   @IsNumber()
   @IsOptional()
   @Min(0)
