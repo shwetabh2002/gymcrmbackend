@@ -58,26 +58,6 @@ export class EmployeesController {
   }
 
   /**
-   * Get upcoming birthdays (today & tomorrow, server local date)
-   * GET /employees/upcoming/birthdays — two segments so this never matches :id
-   */
-  @Get('upcoming/birthdays')
-  @HttpCode(HttpStatus.OK)
-  async getUpcomingBirthdays() {
-    return this.employeesService.getUpcomingBirthdays();
-  }
-
-  /**
-   * Get upcoming anniversaries (today & tomorrow, server local date)
-   * GET /employees/upcoming/anniversaries
-   */
-  @Get('upcoming/anniversaries')
-  @HttpCode(HttpStatus.OK)
-  async getUpcomingAnniversaries() {
-    return this.employeesService.getUpcomingAnniversaries();
-  }
-
-  /**
    * Get all employees
    * GET /employees
    * Note: Public for admins (JWT required) - no password needed for read access

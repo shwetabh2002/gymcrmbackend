@@ -15,6 +15,8 @@ import { UserType } from '../common/enums/user-type.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PaymentStatus } from '../common/enums/payment-status.enum';
 import { memberDiscountRupeesForAnalytics } from '../common/utils/member-discount.util';
+import { EmployeesService } from '../employees/employees.service';
+import { MembersService } from '../members/members.service';
 
 @Injectable()
 export class AnalyticsService {
@@ -25,6 +27,8 @@ export class AnalyticsService {
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
     @InjectModel(MemberPayment.name)
     private memberPaymentModel: Model<MemberPaymentDocument>,
+    private employeesService: EmployeesService,
+    private membersService: MembersService,
   ) {}
 
   /**
@@ -1064,5 +1068,23 @@ export class AnalyticsService {
       count: allPaymentUpdates.length,
       payments: allPaymentUpdates,
     };
+  }
+
+  /** Dashboard: staff + members with birthday today or tomorrow (single API for CRM). */
+  async getUpcomingBirthdays() {
+    const [employees, members] = await Promise.all([
+      this.employeesService.getUpcomingBirthdays(),
+      this.membersService.getUpcomingBirthdays(),
+    ]);
+    return [...employees, ...members];
+  }
+
+  /** Dashboard: staff + members with anniversary today or tomorrow. */
+  async getUpcomingAnniversaries() {
+    const [employees, members] = await Promise.all([
+      this.employeesService.getUpcomingAnniversaries(),
+      this.membersService.getUpcomingAnniversaries(),
+    ]);
+    return [...employees, ...members];
   }
 }

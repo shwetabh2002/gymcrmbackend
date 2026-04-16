@@ -17,10 +17,14 @@ import {
   MemberPayment,
   MemberPaymentSchema,
 } from '../members/schemas/member-payment.schema';
+import { EmployeesModule } from '../employees/employees.module';
+import { MembersModule } from '../members/members.module';
 
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
+    EmployeesModule,
+    MembersModule,
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: MemberSubscription.name, schema: MemberSubscriptionSchema },

@@ -51,4 +51,14 @@ export class AnalyticsController {
   async getPaymentUpdates() {
     return this.analyticsService.getPaymentUpdates(20);
   }
+
+  @Get('upcoming-birthdays')
+  async getUpcomingBirthdays() {
+    return this.analyticsService.getUpcomingBirthdays();
+  }
+
+  @Get('upcoming-anniversaries')
+  async getUpcomingAnniversaries() {
+    return this.analyticsService.getUpcomingAnniversaries();
+  }
 }

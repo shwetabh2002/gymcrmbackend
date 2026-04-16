@@ -9,7 +9,6 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  UseGuards,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
@@ -21,7 +20,6 @@ import { UpdateMemberDto } from './dto/update-member.dto';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
-import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ParseObjectIdPipe } from '@nestjs/mongoose';
 
 @Controller('members')
@@ -38,24 +36,6 @@ export class MembersController {
   @HttpCode(HttpStatus.OK)
   async findAll() {
     return this.membersService.findAll();
-  }
-
-  /**
-   * Use two path segments (`upcoming/birthdays`) so this never collides with `@Get(':id')`
-   * (single-segment `upcoming-birthdays` can be matched as id on some deployments).
-   */
-  @Get('upcoming/birthdays')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  async getUpcomingBirthdays() {
-    return this.membersService.getUpcomingBirthdays();
-  }
-
-  @Get('upcoming/anniversaries')
-  @UseGuards(JwtAuthGuard)
-  @HttpCode(HttpStatus.OK)
-  async getUpcomingAnniversaries() {
-    return this.membersService.getUpcomingAnniversaries();
   }
 
   // === New Simplified Flow Endpoints (must be before :id routes) ===
@@ -119,9 +99,7 @@ export class MembersController {
     return this.membersService.importFromExcel(file.buffer);
   }
 
-  /**
-   * Dynamic :id routes last — dashboard uses /members/upcoming/birthdays (two segments).
-   */
+  /** Dynamic :id routes last. */
   @Get(':id/payments')
   @HttpCode(HttpStatus.OK)
   async getMemberPayments(@Param('id', ParseObjectIdPipe) id: string) {
