@@ -41,16 +41,17 @@ export class MembersController {
   }
 
   /**
-   * Static paths MUST be declared before @Get(':id') or Express matches :id = "upcoming-birthdays".
+   * Use two path segments (`upcoming/birthdays`) so this never collides with `@Get(':id')`
+   * (single-segment `upcoming-birthdays` can be matched as id on some deployments).
    */
-  @Get('upcoming-birthdays')
+  @Get('upcoming/birthdays')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async getUpcomingBirthdays() {
     return this.membersService.getUpcomingBirthdays();
   }
 
-  @Get('upcoming-anniversaries')
+  @Get('upcoming/anniversaries')
   @UseGuards(JwtAuthGuard)
   @HttpCode(HttpStatus.OK)
   async getUpcomingAnniversaries() {
@@ -119,7 +120,7 @@ export class MembersController {
   }
 
   /**
-   * Dynamic :id routes last — see upcoming-birthdays above.
+   * Dynamic :id routes last — dashboard uses /members/upcoming/birthdays (two segments).
    */
   @Get(':id/payments')
   @HttpCode(HttpStatus.OK)

@@ -59,9 +59,9 @@ export class EmployeesController {
 
   /**
    * Get upcoming birthdays (today & tomorrow, server local date)
-   * GET /employees/upcoming-birthdays
+   * GET /employees/upcoming/birthdays — two segments so this never matches :id
    */
-  @Get('upcoming-birthdays')
+  @Get('upcoming/birthdays')
   @HttpCode(HttpStatus.OK)
   async getUpcomingBirthdays() {
     return this.employeesService.getUpcomingBirthdays();
@@ -69,9 +69,9 @@ export class EmployeesController {
 
   /**
    * Get upcoming anniversaries (today & tomorrow, server local date)
-   * GET /employees/upcoming-anniversaries
+   * GET /employees/upcoming/anniversaries
    */
-  @Get('upcoming-anniversaries')
+  @Get('upcoming/anniversaries')
   @HttpCode(HttpStatus.OK)
   async getUpcomingAnniversaries() {
     return this.employeesService.getUpcomingAnniversaries();
