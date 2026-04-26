@@ -131,10 +131,72 @@ export class EmployeesService {
   }
 
   /**
+   * How many staff have a non-empty device user id (needed for eSSL sync / push).
+   */
+  async countWithDeviceUserIdSet(): Promise<number> {
+    return this.employeeModel
+      .countDocuments({
+        deviceUserId: { $exists: true, $nin: [null, ''] },
+      })
+      .exec();
+  }
+
+  async countEmployees(): Promise<number> {
+    return this.employeeModel.countDocuments().exec();
+  }
+
+  /**
+   * CRM / eSSL: who is mapped to which device user id (must match User Id in Device Log List).
+   */
+  async listDeviceUserIdMapping(): Promise<
+    { name: string; employeeId: string; deviceUserId: string }[]
+  > {
+    const rows = await this.employeeModel
+      .find({
+        deviceUserId: { $exists: true, $nin: [null, ''] },
+      })
+      .select('name employeeId deviceUserId')
+      .sort({ name: 1 })
+      .limit(100)
+      .lean()
+      .exec();
+    return rows.map((r: any) => ({
+      name: r.name,
+      employeeId: r.employeeId,
+      deviceUserId: String(r.deviceUserId ?? '').trim(),
+    }));
+  }
+
+  /**
    * Find employee by device user ID (for biometric integration)
+   * Matches eSSL "1" vs DB "1", "01", and trims whitespace.
    */
   async findByDeviceUserId(deviceUserId: string): Promise<EmployeeDocument | null> {
-    return this.employeeModel.findOne({ deviceUserId }).exec();
+    const raw = String(deviceUserId ?? '').trim();
+    if (!raw) {
+      return null;
+    }
+    const direct = await this.employeeModel
+      .findOne({ deviceUserId: raw })
+      .exec();
+    if (direct) {
+      return direct;
+    }
+    if (/^\d+$/.test(raw)) {
+      const n = parseInt(raw, 10);
+      const asInt = String(n);
+      const fromInt = await this.employeeModel
+        .findOne({ deviceUserId: asInt })
+        .exec();
+      if (fromInt) {
+        return fromInt;
+      }
+      const two = raw.padStart(2, '0');
+      if (two !== raw) {
+        return this.employeeModel.findOne({ deviceUserId: two }).exec();
+      }
+    }
+    return null;
   }
 
   /**

@@ -14,9 +14,11 @@ async function bootstrap() {
 
   // Enable CORS with credentials
   // When credentials: true, we MUST use a function or specific origins (not wildcard)
-  const allowedOrigins = [
+  const baseOrigins = [
     'http://localhost:3000',
     'http://localhost:3001',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:3001',
     'http://localhost:5173',
     'https://gymcrmfrontend.onrender.com',
     'https://crm.crmdalyfstylefitness.in',
@@ -25,6 +27,34 @@ async function bootstrap() {
     'https://13.233.134.248',
   ];
 
+  const extraFromEnv =
+    process.env.ADDITIONAL_CORS_ORIGINS?.split(',')
+      .map((o) => o.trim())
+      .filter(Boolean) ?? [];
+  const frontendUrl = process.env.FRONTEND_URL?.trim();
+  if (frontendUrl && !baseOrigins.includes(frontendUrl)) {
+    extraFromEnv.push(frontendUrl);
+  }
+  const allowedOrigins = [...new Set([...baseOrigins, ...extraFromEnv])];
+
+  /** In development, allow browsers on the same LAN (e.g. phone → http://192.168.1.10:3000). */
+  const isDevPrivateLanOrigin = (origin: string): boolean => {
+    if (process.env.NODE_ENV === 'production') return false;
+    try {
+      const u = new URL(origin);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+      const h = u.hostname;
+      if (h === 'localhost' || h === '127.0.0.1') return false; // already in list
+      return (
+        /^192\.168\.\d{1,3}\.\d{1,3}$/.test(h) ||
+        /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h) ||
+        /^172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}$/.test(h)
+      );
+    } catch {
+      return false;
+    }
+  };
+
   app.enableCors({
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps, Postman, curl)
@@ -32,6 +62,10 @@ async function bootstrap() {
 
       // Check if origin is in allowed list
       if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      if (isDevPrivateLanOrigin(origin)) {
         return callback(null, true);
       }
 
@@ -57,7 +91,9 @@ async function bootstrap() {
     exposedHeaders: ['Authorization'],
     maxAge: 86400, // 24 hours
   });
-  logger.log(`🌐 CORS enabled for ${allowedOrigins.length} origins`);
+  logger.log(
+    `🌐 CORS: ${allowedOrigins.length} static origins; dev LAN origins allowed when NODE_ENV !== production`,
+  );
 
   // Enable global validation pipes
   app.useGlobalPipes(
