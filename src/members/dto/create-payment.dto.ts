@@ -27,6 +27,10 @@ export class CreatePaymentDto {
   @Min(0)
   pending?: number;
 
+  @IsDateString()
+  @IsOptional()
+  pendingDueDate?: string;
+
   @IsString()
   @IsNotEmpty()
   mop: string; // Mode of payment: cash, upi, card, bank_transfer
@@ -52,4 +56,28 @@ export class CreatePaymentDto {
   @IsDateString()
   @IsOptional()
   newExpiryDate?: string; // New expiry date after renewal
+
+  @IsDateString()
+  @IsOptional()
+  renewalStartDate?: string;
+
+  @IsString()
+  @IsOptional()
+  packageName?: string;
+
+  @IsString()
+  @IsOptional()
+  trainingType?: string;
+
+  @IsString()
+  @IsOptional()
+  trainer?: string;
+
+  @IsString()
+  @IsOptional()
+  salesPerson?: string;
+
+  @IsString()
+  @IsOptional()
+  memberType?: string;
 }

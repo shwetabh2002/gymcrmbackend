@@ -392,12 +392,11 @@ export class AttendanceService implements OnModuleInit, OnModuleDestroy {
       }
     }
 
-    const tz = this.configService.get<string>('APP_TIMEZONE')?.trim() || 'Asia/Kolkata';
     return rows.map((r) => {
       const deviceUserId = String(r.UserId ?? r.EmployeeCode ?? '').trim();
       const employee = byDevice.get(this.normalizeDeviceIdForMatch(deviceUserId)) ?? null;
-      const dt = r.LogDateTime ? new Date(r.LogDateTime) : null;
-      const date = dt ? this.getDateYmdInTimeZone(dt, tz) : '';
+      const dtText = this.toSqlLocalDateTimeText(r.LogDateTime);
+      const date = dtText ? dtText.slice(0, 10) : '';
       const direction = String(r.Direction ?? '').trim();
 
       return {
@@ -414,14 +413,41 @@ export class AttendanceService implements OnModuleInit, OnModuleDestroy {
         employeeName: employee?.name ?? 'Unknown Employee',
         deviceUserId: deviceUserId || '',
         date,
-        checkInTime: dt?.toISOString(),
-        checkOutTime: dt?.toISOString(),
-        allPunches: dt ? [dt.toISOString()] : [],
+        checkInTime: dtText ?? undefined,
+        checkOutTime: dtText ?? undefined,
+        allPunches: dtText ? [dtText] : [],
         status: direction || '—',
         deviceSerialNumber: String(r.Device ?? '').trim() || undefined,
         remarks: direction || undefined,
       };
     });
+  }
+
+  /** Preserve SQL wall-clock datetime without UTC conversion. */
+  private toSqlLocalDateTimeText(v: string | Date | null | undefined): string | null {
+    if (v == null) return null;
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (!s) return null;
+      // SQL CONVERT(120) gives "YYYY-MM-DD HH:mm:ss" -> make it ISO-like (no timezone).
+      if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(s)) {
+        return s.replace(' ', 'T');
+      }
+      // Already ISO-ish; keep clock as-is (strip trailing Z if present).
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) {
+        return s.replace(/Z$/, '');
+      }
+      return s;
+    }
+    if (!(v instanceof Date) || isNaN(v.getTime())) return null;
+    // Fallback only if driver gave a Date object.
+    const y = v.getFullYear();
+    const mo = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    const h = String(v.getHours()).padStart(2, '0');
+    const mi = String(v.getMinutes()).padStart(2, '0');
+    const se = String(v.getSeconds()).padStart(2, '0');
+    return `${y}-${mo}-${d}T${h}:${mi}:${se}`;
   }
 
   /** YYYY-MM-DD in IANA zone (e.g. Asia/Kolkata). */

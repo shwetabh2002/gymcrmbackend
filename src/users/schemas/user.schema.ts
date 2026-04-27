@@ -82,6 +82,9 @@ export class User {
   @Prop({ type: Number, default: null })
   membershipAmount: number | null;
 
+  @Prop({ type: Date, default: null })
+  pendingDueDate: Date | null;
+
   // Original amount before discount (for reference)
   @Prop({ type: Number, default: null })
   amount: number | null;

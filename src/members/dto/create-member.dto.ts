@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsDateString, IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 import { MemberStatus } from '../../common/enums/member-status.enum';
 
 export class CreateMemberDto {
@@ -29,4 +29,8 @@ export class CreateMemberDto {
   @IsEnum(MemberStatus)
   @IsOptional()
   memberStatus?: MemberStatus;
+
+  @IsDateString()
+  @IsOptional()
+  pendingDueDate?: string;
 }

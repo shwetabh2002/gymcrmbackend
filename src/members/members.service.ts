@@ -69,6 +69,9 @@ export class MembersService {
     // Create member with dummy password (members don't login)
     const member = new this.userModel({
       ...createDto,
+      pendingDueDate: createDto.pendingDueDate
+        ? new Date(createDto.pendingDueDate)
+        : null,
       idNo,
       userType: UserType.MEMBER,
       role: Role.USER,
@@ -175,13 +178,35 @@ export class MembersService {
       payload.discountAmount = null;
       payload.discount = 0;
     }
+    if (Object.prototype.hasOwnProperty.call(payload, 'pendingDueDate')) {
+      const raw = payload.pendingDueDate as string | undefined;
+      payload.pendingDueDate = raw ? new Date(raw) : null;
+    }
 
     const member = await this.userModel
-      .findOneAndUpdate(
-        { _id: id, userType: UserType.MEMBER },
-        payload,
-        { new: true },
-      )
+      .findOne({ _id: id, userType: UserType.MEMBER })
+      .exec();
+
+    if (!member) {
+      throw new NotFoundException(`Member with ID ${id} not found`);
+    }
+
+    Object.assign(member, payload);
+
+    // Keep active membership pendingDueDate in sync for older/existing users edited from UI.
+    if (Object.prototype.hasOwnProperty.call(payload, 'pendingDueDate')) {
+      const activeMembership = member.memberships?.find((m) => m.status === 'ACTIVE');
+      if (activeMembership) {
+        const hasPending = (activeMembership.pendingAmount ?? 0) > 0;
+        activeMembership.pendingDueDate =
+          hasPending && member.pendingDueDate ? new Date(member.pendingDueDate) : null;
+      }
+    }
+
+    await member.save();
+
+    const updatedMember = await this.userModel
+      .findById(id)
       .select('-password -refreshToken')
       .populate({
         path: 'currentSubscriptionId',
@@ -190,11 +215,11 @@ export class MembersService {
       })
       .exec();
 
-    if (!member) {
+    if (!updatedMember) {
       throw new NotFoundException(`Member with ID ${id} not found`);
     }
 
-    return member;
+    return updatedMember;
   }
 
   async delete(id: string): Promise<void> {
@@ -299,6 +324,9 @@ export class MembersService {
       discount: usedAmountDiscount ? 0 : legacyPercent,
       discountAmount: usedAmountDiscount ? rupeesOff : null,
       discountApprovedBy: registerDto.discountApprovedBy,
+      pendingDueDate: registerDto.pendingDueDate
+        ? new Date(registerDto.pendingDueDate)
+        : null,
 
       // Membership details (legacy fields - kept for backward compatibility)
       membershipMonths: registerDto.membershipMonths,
@@ -315,6 +343,9 @@ export class MembersService {
         totalAmount: finalAmount, // Use discounted amount
         amountPaid: registerDto.received,
         pendingAmount: pending,
+        pendingDueDate: registerDto.pendingDueDate
+          ? new Date(registerDto.pendingDueDate)
+          : null,
         status: 'ACTIVE',
         package: `${registerDto.membershipMonths} MONTH`,
         trainingType: registerDto.trainingType,
@@ -333,6 +364,9 @@ export class MembersService {
       amount: finalAmount, // Use discounted amount
       received: registerDto.received,
       pending: pending,
+      pendingDueDate: registerDto.pendingDueDate
+        ? new Date(registerDto.pendingDueDate)
+        : null,
       mop: registerDto.mop,
       paymentDate: new Date(registerDto.date),
       transactionId: registerDto.transactionId,
@@ -379,12 +413,19 @@ export class MembersService {
     amount: number;
     received: number;
     pending?: number;
+    pendingDueDate?: string;
     mop: string;
     paymentDate: string;
     transactionId?: string;
     notes?: string;
     renewalMonths?: number;
     newExpiryDate?: string;
+    renewalStartDate?: string;
+    packageName?: string;
+    trainingType?: string;
+    trainer?: string;
+    salesPerson?: string;
+    memberType?: string;
   }): Promise<{ payment: MemberPaymentDocument; member: UserDocument }> {
     // Validate member exists
     const member = await this.userModel
@@ -448,6 +489,9 @@ export class MembersService {
             membershipToUpdate.amountPaid += amountToClear;
             membershipToUpdate.pendingAmount -= amountToClear;
             membershipToUpdate.pendingAmount = Math.max(0, membershipToUpdate.pendingAmount);
+            if (membershipToUpdate.pendingAmount <= 0) {
+              membershipToUpdate.pendingDueDate = null;
+            }
           }
         }
 
@@ -465,6 +509,9 @@ export class MembersService {
       amount: createPaymentDto.amount,
       received: createPaymentDto.received,
       pending: pending,
+      pendingDueDate: createPaymentDto.pendingDueDate
+        ? new Date(createPaymentDto.pendingDueDate)
+        : null,
       mop: createPaymentDto.mop,
       paymentDate: new Date(createPaymentDto.paymentDate),
       transactionId: createPaymentDto.transactionId,
@@ -478,6 +525,13 @@ export class MembersService {
       activeMembership.amountPaid += createPaymentDto.received;
       activeMembership.pendingAmount -= createPaymentDto.received;
       activeMembership.pendingAmount = Math.max(0, activeMembership.pendingAmount);
+      activeMembership.pendingDueDate =
+        activeMembership.pendingAmount > 0 && createPaymentDto.pendingDueDate
+          ? new Date(createPaymentDto.pendingDueDate)
+          : activeMembership.pendingAmount > 0
+            ? activeMembership.pendingDueDate ?? null
+            : null;
+      member.pendingDueDate = activeMembership.pendingDueDate ?? null;
 
       await member.save();
     }
@@ -504,8 +558,13 @@ export class MembersService {
         newExpiryDate = currentExpiry;
       }
 
-      const newStartDate = new Date(currentExpiry);
-      newStartDate.setDate(newStartDate.getDate() + 1); // Start day after old membership expires
+      const newStartDate = createPaymentDto.renewalStartDate
+        ? new Date(createPaymentDto.renewalStartDate)
+        : (() => {
+            const dt = new Date(currentExpiry);
+            dt.setDate(dt.getDate() + 1); // Default: day after old membership expires
+            return dt;
+          })();
 
       // Create new membership
       const newMembership = {
@@ -515,12 +574,18 @@ export class MembersService {
         totalAmount: createPaymentDto.amount,
         amountPaid: createPaymentDto.received,
         pendingAmount: createPaymentDto.amount - createPaymentDto.received,
+        pendingDueDate:
+          createPaymentDto.amount - createPaymentDto.received > 0 &&
+          createPaymentDto.pendingDueDate
+            ? new Date(createPaymentDto.pendingDueDate)
+            : null,
         status: 'ACTIVE',
-        package: createPaymentDto.renewalMonths ? `${createPaymentDto.renewalMonths} MONTH` : null,
-        trainingType: activeMembership?.trainingType || null,
-        trainer: activeMembership?.trainer || null,
-        salesPerson: activeMembership?.salesPerson || null,
-        memberType: 'Renewal',
+        package: createPaymentDto.packageName
+          || (createPaymentDto.renewalMonths ? `${createPaymentDto.renewalMonths} MONTH` : null),
+        trainingType: createPaymentDto.trainingType ?? activeMembership?.trainingType ?? null,
+        trainer: createPaymentDto.trainer ?? activeMembership?.trainer ?? null,
+        salesPerson: createPaymentDto.salesPerson ?? activeMembership?.salesPerson ?? null,
+        memberType: createPaymentDto.memberType ?? 'Renewal',
       };
 
       member.memberships.push(newMembership as any);
@@ -530,6 +595,15 @@ export class MembersService {
       member.startingDate = newStartDate;
       member.membershipMonths = (member.membershipMonths || 0) + (createPaymentDto.renewalMonths || 0);
       member.membershipAmount = (member.membershipAmount || 0) + createPaymentDto.amount;
+      member.trainingType = newMembership.trainingType;
+      member.trainer = newMembership.trainer;
+      member.salesPerson = newMembership.salesPerson;
+      member.memberType = newMembership.memberType;
+      member.pendingDueDate =
+        createPaymentDto.amount - createPaymentDto.received > 0 &&
+        createPaymentDto.pendingDueDate
+          ? new Date(createPaymentDto.pendingDueDate)
+          : null;
 
       await member.save();
 
@@ -829,6 +903,7 @@ export class MembersService {
           startingDate: new Date(memberData.startingDate),
           expiryDate: new Date(memberData.expiryDate),
           membershipAmount: memberData.amount,
+          pendingDueDate: memberData.pending > 0 ? new Date(memberData.expiryDate) : null,
           memberships: [{
             startDate: new Date(memberData.startingDate),
             expiryDate: new Date(memberData.expiryDate),
@@ -836,6 +911,7 @@ export class MembersService {
             totalAmount: memberData.amount,
             amountPaid: memberData.received,
             pendingAmount: memberData.pending,
+            pendingDueDate: memberData.pending > 0 ? new Date(memberData.expiryDate) : null,
             status: 'ACTIVE',
             package: memberData.package,
             trainingType: memberData.trainingType,
@@ -857,6 +933,7 @@ export class MembersService {
           amount: memberData.amount,
           received: memberData.received,
           pending: memberData.pending,
+          pendingDueDate: memberData.pending > 0 ? new Date(memberData.expiryDate) : null,
           mop: memberData.mop,
           paymentDate: new Date(memberData.date),
           transactionId: undefined,

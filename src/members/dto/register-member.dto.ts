@@ -78,6 +78,10 @@ export class RegisterMemberDto {
   @Min(0)
   pending?: number; // Pending amount (auto-calculated if not provided)
 
+  @IsDateString()
+  @IsOptional()
+  pendingDueDate?: string;
+
   @IsString()
   @IsNotEmpty()
   mop: string; // Mode of payment

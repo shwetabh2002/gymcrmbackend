@@ -20,6 +20,9 @@ export class MemberPayment {
   @Prop({ type: Number, required: true, default: 0 })
   pending: number;
 
+  @Prop({ type: Date, default: null })
+  pendingDueDate: Date | null;
+
   @Prop({ type: String, required: true })
   mop: string; // Mode of payment (upi, cash, card, etc.)
 

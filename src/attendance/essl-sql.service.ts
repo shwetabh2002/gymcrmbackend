@@ -6,9 +6,9 @@ export interface EsslSqlAttendanceRow {
   SNO: number;
   UserId: string | null;
   EmployeeCode: string | null;
-  LogDateTime: Date | string | null;
-  LogDate: Date | string | null;
-  LogTime: Date | string | null;
+  LogDateTime: string | Date | null;
+  LogDate: string | Date | null;
+  LogTime: string | Date | null;
   Direction: string | null;
   Device: string | null;
 }
@@ -71,6 +71,8 @@ export class EsslSqlService {
       options: {
         encrypt: false,
         trustServerCertificate: true,
+        // AttendanceData stores local wall-clock times; keep SQL values as local, not UTC-shifted.
+        useUTC: false,
       },
       pool: {
         max: 10,
@@ -122,7 +124,14 @@ export class EsslSqlService {
       .input('fromDt', mssql.DateTime2, from)
       .input('toDt', mssql.DateTime2, to).query<EsslSqlAttendanceRow>(`
         SELECT
-          SNO, UserId, EmployeeCode, LogDateTime, LogDate, LogTime, Direction, Device
+          SNO,
+          UserId,
+          EmployeeCode,
+          CONVERT(VARCHAR(19), LogDateTime, 120) AS LogDateTime,
+          CONVERT(VARCHAR(10), LogDate, 120) AS LogDate,
+          CONVERT(VARCHAR(8), LogTime, 108) AS LogTime,
+          Direction,
+          Device
         FROM dbo.AttendanceData
         WHERE LogDateTime >= @fromDt
           AND LogDateTime <= @toDt
@@ -138,7 +147,14 @@ export class EsslSqlService {
       .request()
       .input('afterSno', mssql.Int, afterSno).query<EsslSqlAttendanceRow>(`
         SELECT TOP (${maxRows})
-          SNO, UserId, EmployeeCode, LogDateTime, LogDate, LogTime, Direction, Device
+          SNO,
+          UserId,
+          EmployeeCode,
+          CONVERT(VARCHAR(19), LogDateTime, 120) AS LogDateTime,
+          CONVERT(VARCHAR(10), LogDate, 120) AS LogDate,
+          CONVERT(VARCHAR(8), LogTime, 108) AS LogTime,
+          Direction,
+          Device
         FROM dbo.AttendanceData
         WHERE SNO > @afterSno
         ORDER BY SNO ASC

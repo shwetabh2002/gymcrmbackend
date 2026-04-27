@@ -23,6 +23,9 @@ export class Membership {
   @Prop({ type: Number, required: true, default: 0 })
   pendingAmount: number;
 
+  @Prop({ type: Date, default: null })
+  pendingDueDate: Date | null;
+
   @Prop({
     type: String,
     enum: ['ACTIVE', 'EXPIRED', 'CANCELLED'],

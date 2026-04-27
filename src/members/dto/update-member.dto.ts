@@ -68,6 +68,10 @@ export class UpdateMemberDto {
   @IsOptional()
   pending?: number;
 
+  @IsDateString()
+  @IsOptional()
+  pendingDueDate?: string;
+
   @IsString()
   @IsOptional()
   mop?: string;
