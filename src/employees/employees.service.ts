@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { Employee, EmployeeDocument } from './schemas/employee.schema';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { EmployeeStatus } from '../common/enums/employee-status.enum';
 import {
   isMonthDayTodayOrTomorrow,
   todayOrTomorrowOrder,
@@ -205,7 +206,7 @@ export class EmployeesService {
   async getUpcomingBirthdays(): Promise<EmployeeDocument[]> {
     const ref = new Date();
     const allEmployees = await this.employeeModel
-      .find({ status: 'ACTIVE', dob: { $exists: true, $ne: null } })
+      .find({ status: EmployeeStatus.ACTIVE, dob: { $exists: true, $ne: null } })
       .exec();
 
     return allEmployees
@@ -235,7 +236,7 @@ export class EmployeesService {
     const ref = new Date();
     const allEmployees = await this.employeeModel
       .find({
-        status: 'ACTIVE',
+        status: EmployeeStatus.ACTIVE,
         isMarried: true,
         anniversaryDate: { $exists: true, $ne: null },
       })
