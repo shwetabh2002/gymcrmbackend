@@ -20,6 +20,7 @@ import { UpdateMemberDto } from './dto/update-member.dto';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { MembersListQueryDto } from './dto/members-list-query.dto';
 import { ParseObjectIdPipe } from '@nestjs/mongoose';
 
 @Controller('members')
@@ -36,6 +37,12 @@ export class MembersController {
   @HttpCode(HttpStatus.OK)
   async findAll() {
     return this.membersService.findAll();
+  }
+
+  @Get('list')
+  @HttpCode(HttpStatus.OK)
+  async list(@Query() query: MembersListQueryDto) {
+    return this.membersService.getMembersList(query);
   }
 
   // === New Simplified Flow Endpoints (must be before :id routes) ===

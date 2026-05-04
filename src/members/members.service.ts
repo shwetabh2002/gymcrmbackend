@@ -26,6 +26,7 @@ import {
   todayOrTomorrowOrder,
 } from '../common/utils/upcoming-celebration.util';
 import { computeMemberDiscount } from '../common/utils/member-discount.util';
+import { MembersListQueryDto } from './dto/members-list-query.dto';
 
 @Injectable()
 export class MembersService {
@@ -123,6 +124,166 @@ export class MembersService {
         return member.toObject();
       }),
     );
+  }
+
+  async getMembersList(query: MembersListQueryDto): Promise<{
+    data: any[];
+    pagination: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+      hasNextPage: boolean;
+      hasPrevPage: boolean;
+    };
+    summary: {
+      totalMembers: number;
+      activeMembers: number;
+      totalReceived: number;
+      totalPending: number;
+      ptMembers: number;
+      gtMembers: number;
+    };
+  }> {
+    const page = Number(query.page || 1);
+    const limit = Number(query.limit || 10);
+
+    const baseFilter: Record<string, any> = {
+      userType: UserType.MEMBER,
+    };
+
+    if (query.search) {
+      baseFilter.$or = [
+        { name: { $regex: query.search, $options: 'i' } },
+        { email: { $regex: query.search, $options: 'i' } },
+        { phone: { $regex: query.search, $options: 'i' } },
+        { idNo: { $regex: query.search, $options: 'i' } },
+        { trainer: { $regex: query.search, $options: 'i' } },
+        { salesPerson: { $regex: query.search, $options: 'i' } },
+      ];
+    }
+
+    if (query.status && query.status !== 'ALL') {
+      baseFilter.memberStatus = query.status;
+    }
+    if (query.type && query.type !== 'ALL') {
+      baseFilter.memberType = query.type;
+    }
+    if (query.training && query.training !== 'ALL') {
+      baseFilter.trainingType = query.training;
+    }
+
+    const members = await this.userModel
+      .find(baseFilter)
+      .select('-password -refreshToken')
+      .sort({ createdAt: -1 })
+      .exec();
+
+    const enriched = await Promise.all(
+      members.map(async (member) => {
+        if (!member.membershipMonths) {
+          return member.toObject();
+        }
+
+        const payments = await this.memberPaymentModel
+          .find({ memberId: member._id } as any)
+          .exec();
+
+        const totalAmount = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
+        const totalReceived = payments.reduce((sum, p) => sum + (p.received || 0), 0);
+        const totalPending = Math.max(0, totalAmount - totalReceived);
+        const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
+
+        return {
+          ...member.toObject(),
+          paymentSummary: {
+            totalReceived,
+            totalPending,
+            hasPendingBalance: totalPending > 0,
+            lastPaymentDate: lastPayment?.paymentDate || null,
+            lastPaymentAmount: lastPayment?.received || 0,
+            paymentCount: payments.length,
+          },
+        };
+      }),
+    );
+
+    const getMembershipInfo = (member: any) => {
+      const activeMembership = member.memberships?.find((m: any) => m.status === 'ACTIVE') || null;
+      if (activeMembership) {
+        return {
+          pendingAmount: activeMembership.pendingAmount ?? 0,
+          amountPaid: activeMembership.amountPaid ?? 0,
+          pendingDueDate: activeMembership.pendingDueDate ?? null,
+        };
+      }
+      return {
+        pendingAmount: member.paymentSummary?.totalPending ?? member.pending ?? 0,
+        amountPaid: member.paymentSummary?.totalReceived ?? member.received ?? 0,
+        pendingDueDate: member.pendingDueDate ?? null,
+      };
+    };
+
+    const filtered = enriched.filter((member) => {
+      const membershipInfo = getMembershipInfo(member);
+      const hasPending = (membershipInfo.pendingAmount ?? 0) > 0;
+
+      const matchPending =
+        !query.pending ||
+        query.pending === 'ALL' ||
+        (query.pending === 'HAS_PENDING' && hasPending) ||
+        (query.pending === 'FULLY_PAID' && !hasPending);
+
+      const matchPendingByDate =
+        !query.pendingByDate ||
+        (
+          hasPending &&
+          !!membershipInfo.pendingDueDate &&
+          new Date(membershipInfo.pendingDueDate).getTime() <= new Date(query.pendingByDate).getTime()
+        );
+
+      return matchPending && matchPendingByDate;
+    });
+
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const start = (safePage - 1) * limit;
+    const data = filtered.slice(start, start + limit);
+
+    const summary = filtered.reduce(
+      (acc, member: any) => {
+        const membershipInfo = getMembershipInfo(member);
+        acc.totalMembers += 1;
+        if (member.memberStatus === 'ACTIVE') acc.activeMembers += 1;
+        if (member.trainingType === 'PT') acc.ptMembers += 1;
+        if (member.trainingType === 'GT') acc.gtMembers += 1;
+        acc.totalReceived += Number(membershipInfo.amountPaid || 0);
+        acc.totalPending += Number(membershipInfo.pendingAmount || 0);
+        return acc;
+      },
+      {
+        totalMembers: 0,
+        activeMembers: 0,
+        totalReceived: 0,
+        totalPending: 0,
+        ptMembers: 0,
+        gtMembers: 0,
+      },
+    );
+
+    return {
+      data,
+      pagination: {
+        total,
+        page: safePage,
+        limit,
+        totalPages,
+        hasNextPage: safePage < totalPages,
+        hasPrevPage: safePage > 1,
+      },
+      summary,
+    };
   }
 
   async findById(id: string): Promise<any> {
@@ -764,6 +925,28 @@ export class MembersService {
     // Get total count for pagination metadata
     const total = await this.memberPaymentModel.countDocuments(filter).exec();
 
+    // Build global summary across all filtered results (not just current page)
+    const allMatched = await this.memberPaymentModel
+      .find(filter)
+      .select('amount received pending')
+      .exec();
+
+    const summary = allMatched.reduce(
+      (acc, p) => {
+        acc.totalAmount += p.amount || 0;
+        acc.totalReceived += p.received || 0;
+        acc.totalPending += p.pending || 0;
+        acc.totalPayments += 1;
+        return acc;
+      },
+      {
+        totalPayments: 0,
+        totalAmount: 0,
+        totalReceived: 0,
+        totalPending: 0,
+      },
+    );
+
     // Get paginated results
     const data = await this.memberPaymentModel
       .find(filter)
@@ -775,6 +958,7 @@ export class MembersService {
 
     return {
       data,
+      summary,
       pagination: {
         total,
         page,
