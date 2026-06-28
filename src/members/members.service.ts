@@ -242,7 +242,26 @@ export class MembersService {
           new Date(membershipInfo.pendingDueDate).getTime() <= new Date(query.pendingByDate).getTime()
         );
 
-      return matchPending && matchPendingByDate;
+      let matchDateRange = true;
+      if (query.dateFrom || query.dateTo) {
+        const m = member as any;
+        const refRaw = m.startingDate ?? m.createdAt;
+        if (!refRaw) {
+          matchDateRange = false;
+        } else {
+          const ref = new Date(refRaw);
+          if (query.dateFrom) {
+            const from = new Date(`${query.dateFrom}T00:00:00.000`);
+            if (ref < from) matchDateRange = false;
+          }
+          if (query.dateTo) {
+            const to = new Date(`${query.dateTo}T23:59:59.999`);
+            if (ref > to) matchDateRange = false;
+          }
+        }
+      }
+
+      return matchPending && matchPendingByDate && matchDateRange;
     });
 
     const total = filtered.length;
@@ -885,6 +904,8 @@ export class MembersService {
     search?: string;
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
+    dateFrom?: string;
+    dateTo?: string;
   }) {
     const page = query?.page || 1;
     const limit = query?.limit || 10;
@@ -894,6 +915,16 @@ export class MembersService {
 
     // Build filter
     const filter: any = {};
+
+    if (query?.dateFrom || query?.dateTo) {
+      filter.paymentDate = {};
+      if (query.dateFrom) {
+        filter.paymentDate.$gte = new Date(`${query.dateFrom}T00:00:00.000`);
+      }
+      if (query.dateTo) {
+        filter.paymentDate.$lte = new Date(`${query.dateTo}T23:59:59.999`);
+      }
+    }
 
     // Add search filter (search in populated member fields)
     let memberIds: any[] = [];

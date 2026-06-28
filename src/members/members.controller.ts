@@ -19,8 +19,9 @@ import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { RegisterMemberDto } from './dto/register-member.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
+import { PaymentsListQueryDto } from './dto/payments-list-query.dto';
 import { MembersListQueryDto } from './dto/members-list-query.dto';
+import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 import { ParseObjectIdPipe } from '@nestjs/mongoose';
 
 @Controller('members')
@@ -73,7 +74,7 @@ export class MembersController {
    */
   @Get('payments')
   @HttpCode(HttpStatus.OK)
-  async getAllPayments(@Query() query: PaginationQueryDto) {
+  async getAllPayments(@Query() query: PaymentsListQueryDto) {
     return this.membersService.getAllPayments(query);
   }
 
