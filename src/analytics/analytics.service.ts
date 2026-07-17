@@ -42,8 +42,9 @@ export class AnalyticsService {
       .countDocuments({ subscriptionStatus: SubscriptionStatus.ACTIVE })
       .exec();
 
-    // Total revenue collected
+    // Total revenue collected (exclude voided payments — P0-12)
     const revenueResult = await this.paymentModel.aggregate([
+      { $match: { deletedAt: null } },
       {
         $group: {
           _id: null,
@@ -57,6 +58,7 @@ export class AnalyticsService {
     const monthlyRevenueResult = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: startOfMonth },
         },
       },
@@ -142,7 +144,7 @@ export class AnalyticsService {
 
     // Recent payments (last 10)
     const recentPayments = await this.paymentModel
-      .find()
+      .find({ deletedAt: null })
       .populate('memberId', 'name email')
       .populate('subscriptionId', 'planId')
       .select('memberId amount paymentMode paymentDate transactionId')
@@ -268,8 +270,9 @@ export class AnalyticsService {
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-    // Total revenue all time
+    // Total revenue all time (exclude voided payments — P0-12)
     const totalRevenueResult = await this.paymentModel.aggregate([
+      { $match: { deletedAt: null } },
       {
         $group: {
           _id: null,
@@ -283,6 +286,7 @@ export class AnalyticsService {
     const currentMonthResult = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: startOfMonth },
         },
       },
@@ -301,6 +305,7 @@ export class AnalyticsService {
     const lastMonthResult = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: startOfLastMonth, $lte: endOfLastMonth },
         },
       },
@@ -336,6 +341,7 @@ export class AnalyticsService {
 
     // Payment mode breakdown
     const paymentModeBreakdown = await this.paymentModel.aggregate([
+      { $match: { deletedAt: null } },
       {
         $group: {
           _id: '$paymentMode',
@@ -495,6 +501,7 @@ export class AnalyticsService {
     const monthlyTrends = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: sixMonthsAgo },
         },
       },

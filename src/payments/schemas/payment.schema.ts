@@ -45,6 +45,10 @@ export class Payment {
     required: true,
   })
   receivedBy: MongooseSchema.Types.ObjectId; // Admin/Manager who recorded the payment
+
+  // Soft-delete marker (P0-12): financial records are voided, never hard-deleted.
+  @Prop({ type: Date, default: null })
+  deletedAt: Date | null;
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);

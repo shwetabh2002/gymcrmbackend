@@ -11,6 +11,7 @@ import {
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Payment, PaymentDocument } from '../payments/schemas/payment.schema';
 import { UserType } from '../common/enums/user-type.enum';
+import { CountersService } from '../counters/counters.service';
 
 @Injectable()
 export class InvoicesService {
@@ -20,6 +21,7 @@ export class InvoicesService {
     private memberSubscriptionModel: Model<MemberSubscriptionDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
+    private countersService: CountersService,
   ) {}
 
   async create(
@@ -67,11 +69,8 @@ export class InvoicesService {
     const taxAmount = (subtotal * taxPercentage) / 100;
     const totalAmount = subtotal + taxAmount;
 
-    // Generate invoice number (format: INV-YYYYMMDD-XXXX)
-    const date = new Date();
-    const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-    const count = await this.invoiceModel.countDocuments();
-    const invoiceNumber = `INV-${dateStr}-${String(count + 1).padStart(4, '0')}`;
+    // Generate a collision-free invoice number via the atomic counter (P0-8).
+    const invoiceNumber = await this.countersService.nextInvoiceNumber();
 
     // Create invoice
     const invoice = new this.invoiceModel({
@@ -88,7 +87,7 @@ export class InvoicesService {
 
   async findAll(): Promise<InvoiceDocument[]> {
     return this.invoiceModel
-      .find()
+      .find({ deletedAt: null })
       .populate('subscriptionId')
       .populate('memberId', '-password -refreshToken')
       .populate('paymentId')
@@ -99,7 +98,7 @@ export class InvoicesService {
 
   async findById(id: string): Promise<InvoiceDocument> {
     const invoice = await this.invoiceModel
-      .findById(id)
+      .findOne({ _id: id, deletedAt: null })
       .populate('subscriptionId')
       .populate('memberId', '-password -refreshToken')
       .populate('paymentId')
@@ -123,7 +122,7 @@ export class InvoicesService {
     }
 
     return this.invoiceModel
-      .find({ memberId: memberId as any })
+      .find({ memberId: memberId as any, deletedAt: null })
       .populate('subscriptionId')
       .populate('paymentId')
       .populate('generatedBy', '-password -refreshToken')
@@ -145,7 +144,7 @@ export class InvoicesService {
     }
 
     return this.invoiceModel
-      .find({ subscriptionId: subscriptionId as any })
+      .find({ subscriptionId: subscriptionId as any, deletedAt: null })
       .populate('memberId', '-password -refreshToken')
       .populate('paymentId')
       .populate('generatedBy', '-password -refreshToken')
@@ -157,7 +156,9 @@ export class InvoicesService {
     id: string,
     updateDto: UpdateInvoiceDto,
   ): Promise<InvoiceDocument> {
-    const invoice = await this.invoiceModel.findById(id).exec();
+    const invoice = await this.invoiceModel
+      .findOne({ _id: id, deletedAt: null })
+      .exec();
 
     if (!invoice) {
       throw new NotFoundException(`Invoice with ID ${id} not found`);
@@ -199,13 +200,17 @@ export class InvoicesService {
     return updatedInvoice as InvoiceDocument;
   }
 
+  // Soft-delete (P0-12): financial records are voided, never hard-deleted.
   async delete(id: string): Promise<void> {
-    const invoice = await this.invoiceModel.findById(id).exec();
+    const invoice = await this.invoiceModel
+      .findOne({ _id: id, deletedAt: null })
+      .exec();
 
     if (!invoice) {
       throw new NotFoundException(`Invoice with ID ${id} not found`);
     }
 
-    await this.invoiceModel.findByIdAndDelete(id).exec();
+    invoice.deletedAt = new Date();
+    await invoice.save();
   }
 }

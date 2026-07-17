@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Payment, PaymentDocument } from './schemas/payment.schema';
@@ -8,18 +8,24 @@ import {
   MemberSubscription,
   MemberSubscriptionDocument,
 } from '../member-subscriptions/schemas/member-subscription.schema';
+import { MemberSubscriptionsService } from '../member-subscriptions/member-subscriptions.service';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Invoice, InvoiceDocument } from '../invoices/schemas/invoice.schema';
 import { UserType } from '../common/enums/user-type.enum';
+import { CountersService } from '../counters/counters.service';
 
 @Injectable()
 export class PaymentsService {
+  private readonly logger = new Logger(PaymentsService.name);
+
   constructor(
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
     @InjectModel(MemberSubscription.name)
     private memberSubscriptionModel: Model<MemberSubscriptionDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Invoice.name) private invoiceModel: Model<InvoiceDocument>,
+    private memberSubscriptionsService: MemberSubscriptionsService,
+    private countersService: CountersService,
   ) {}
 
   async create(
@@ -62,24 +68,11 @@ export class PaymentsService {
 
     const savedPayment = await payment.save();
 
-    // Update subscription payment details
-    const newTotalPaid = subscription.totalPaid + createDto.amount;
-    const newPendingAmount = subscription.planPrice - newTotalPaid;
-
-    let newPaymentStatus = subscription.paymentStatus;
-    if (newPendingAmount <= 0) {
-      newPaymentStatus = 'FULLY_PAID' as any;
-    } else if (newTotalPaid > 0) {
-      newPaymentStatus = 'PARTIALLY_PAID' as any;
-    }
-
-    await this.memberSubscriptionModel
-      .findByIdAndUpdate(createDto.subscriptionId, {
-        totalPaid: newTotalPaid,
-        pendingAmount: Math.max(0, newPendingAmount),
-        paymentStatus: newPaymentStatus,
-      })
-      .exec();
+    // Atomically apply the payment to the subscription's running totals (P0-9).
+    await this.memberSubscriptionsService.applyPaymentDelta(
+      createDto.subscriptionId,
+      createDto.amount,
+    );
 
     // Auto-generate invoice for this payment
     await this.generateInvoiceForPayment(
@@ -97,11 +90,8 @@ export class PaymentsService {
     generatedById: string,
   ): Promise<void> {
     try {
-      // Generate invoice number (format: INV-YYYYMMDD-XXXX)
-      const date = new Date();
-      const dateStr = date.toISOString().slice(0, 10).replace(/-/g, '');
-      const count = await this.invoiceModel.countDocuments();
-      const invoiceNumber = `INV-${dateStr}-${String(count + 1).padStart(4, '0')}`;
+      // Generate a collision-free invoice number via the atomic counter (P0-8).
+      const invoiceNumber = await this.countersService.nextInvoiceNumber();
 
       // Get subscription plan details
       const subscriptionWithPlan = await this.memberSubscriptionModel
@@ -143,14 +133,21 @@ export class PaymentsService {
 
       await invoice.save();
     } catch (error) {
-      // Log error but don't fail the payment creation
-      console.error('Failed to auto-generate invoice:', error);
+      // The payment is already recorded; surface this loudly and actionably
+      // instead of swallowing it (P0-10). An invoice is now missing for a real
+      // payment and must be generated manually (or re-run once fixed).
+      this.logger.error(
+        `MANUAL ACTION REQUIRED: payment ${payment._id} (member ${payment.memberId}, ` +
+          `subscription ${payment.subscriptionId}, amount ${payment.amount}) was saved ` +
+          `but its invoice could not be generated.`,
+        error instanceof Error ? error.stack : String(error),
+      );
     }
   }
 
   async findAll(): Promise<PaymentDocument[]> {
     return this.paymentModel
-      .find()
+      .find({ deletedAt: null })
       .populate('subscriptionId')
       .populate('memberId', '-password -refreshToken')
       .populate('receivedBy', '-password -refreshToken')
@@ -160,7 +157,7 @@ export class PaymentsService {
 
   async findById(id: string): Promise<PaymentDocument> {
     const payment = await this.paymentModel
-      .findById(id)
+      .findOne({ _id: id, deletedAt: null })
       .populate('subscriptionId')
       .populate('memberId', '-password -refreshToken')
       .populate('receivedBy', '-password -refreshToken')
@@ -183,7 +180,7 @@ export class PaymentsService {
     }
 
     return this.paymentModel
-      .find({ memberId: memberId as any })
+      .find({ memberId: memberId as any, deletedAt: null })
       .populate('subscriptionId')
       .populate('receivedBy', '-password -refreshToken')
       .sort({ createdAt: -1 })
@@ -204,7 +201,7 @@ export class PaymentsService {
     }
 
     return this.paymentModel
-      .find({ subscriptionId: subscriptionId as any })
+      .find({ subscriptionId: subscriptionId as any, deletedAt: null })
       .populate('memberId', '-password -refreshToken')
       .populate('receivedBy', '-password -refreshToken')
       .sort({ createdAt: -1 })
@@ -215,7 +212,9 @@ export class PaymentsService {
     id: string,
     updateDto: UpdatePaymentDto,
   ): Promise<PaymentDocument> {
-    const payment = await this.paymentModel.findById(id).exec();
+    const payment = await this.paymentModel
+      .findOne({ _id: id, deletedAt: null })
+      .exec();
 
     if (!payment) {
       throw new NotFoundException(`Payment with ID ${id} not found`);
@@ -235,13 +234,35 @@ export class PaymentsService {
     return updatedPayment as PaymentDocument;
   }
 
+  /**
+   * Void a payment (P0-12): soft-delete it, reverse its effect on the
+   * subscription's running totals, and void any invoice generated from it.
+   * Financial records are never hard-deleted.
+   */
   async delete(id: string): Promise<void> {
-    const payment = await this.paymentModel.findById(id).exec();
+    const payment = await this.paymentModel
+      .findOne({ _id: id, deletedAt: null })
+      .exec();
 
     if (!payment) {
       throw new NotFoundException(`Payment with ID ${id} not found`);
     }
 
-    await this.paymentModel.findByIdAndDelete(id).exec();
+    // Reverse the amount from the subscription's totals.
+    await this.memberSubscriptionsService.applyPaymentDelta(
+      payment.subscriptionId.toString(),
+      -payment.amount,
+    );
+
+    // Void any invoice(s) auto-generated from this payment.
+    await this.invoiceModel
+      .updateMany(
+        { paymentId: payment._id as any, deletedAt: null },
+        { deletedAt: new Date() },
+      )
+      .exec();
+
+    payment.deletedAt = new Date();
+    await payment.save();
   }
 }
