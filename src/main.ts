@@ -10,6 +10,9 @@ async function bootstrap() {
   logger.log(`🔢 Node Version: ${process.version}`);
 
   const app = await NestFactory.create(AppModule);
+  
+  // Security headers (P1-6)
+  app.use(helmet());
 
   // Enable CORS
   app.enableCors();

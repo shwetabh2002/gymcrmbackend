@@ -14,9 +14,13 @@ import { MemberSubscriptionsService } from './member-subscriptions.service';
 import { CreateMemberSubscriptionDto } from './dto/create-member-subscription.dto';
 import { UpdateMemberSubscriptionDto } from './dto/update-member-subscription.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { Role } from '../common/enums/role.enum';
 
 @Controller('member-subscriptions')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.MANAGER)
 export class MemberSubscriptionsController {
   constructor(
     private readonly memberSubscriptionsService: MemberSubscriptionsService,

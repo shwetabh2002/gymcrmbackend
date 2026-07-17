@@ -17,10 +17,16 @@ export class JwtAccessStrategy extends PassportStrategy(Strategy, 'jwt') {
     private configService: ConfigService,
     private usersService: UsersService,
   ) {
+    const accessSecret = configService.get<string>('JWT_ACCESS_SECRET');
+    if (!accessSecret) {
+      // Fail fast: never fall back to a hardcoded secret — that makes
+      // tokens forgeable if the env var is missing in production.
+      throw new Error('JWT_ACCESS_SECRET is not configured');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_ACCESS_SECRET') || 'default-secret',
+      secretOrKey: accessSecret,
     });
   }
 

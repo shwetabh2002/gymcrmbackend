@@ -7,10 +7,19 @@ import { UserType } from '../../common/enums/user-type.enum';
 export async function seedAdminUser() {
   const UserModel = model<User>('User', UserSchema);
 
+  // Read seed credentials from env.
+  const adminEmail = process.env.SEED_ADMIN_EMAIL;
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+
+  if (!adminEmail || !adminPassword) {
+    console.error(
+      'Cannot seed admin: set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD in the environment.',
+    );
+    return;
+  }
+
   // Check if admin already exists
-  const existingAdmin = await UserModel.findOne({
-    email: 'admin@backendgym.com',
-  });
+  const existingAdmin = await UserModel.findOne({ email: adminEmail });
 
   if (existingAdmin) {
     console.log('Admin user already exists');
@@ -18,10 +27,10 @@ export async function seedAdminUser() {
   }
 
   // Create admin user
-  const hashedPassword = await bcrypt.hash('Admin@123', 10);
+  const hashedPassword = await bcrypt.hash(adminPassword, 10);
 
   const admin = new UserModel({
-    email: 'admin@backendgym.com',
+    email: adminEmail,
     password: hashedPassword,
     name: 'Admin User',
     role: Role.ADMIN,
@@ -30,7 +39,7 @@ export async function seedAdminUser() {
 
   await admin.save();
 
-  console.log('Admin user created successfully');
-  console.log('Email: admin@backendgym.com');
-  console.log('Password: Admin@123');
+  // Do not log the password.
+  console.log(`Admin user created successfully for ${adminEmail}`);
+  console.log('Log in with the SEED_ADMIN_PASSWORD you configured, then change it.');
 }
