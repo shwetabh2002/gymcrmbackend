@@ -9,6 +9,8 @@ import {
 } from '../member-subscriptions/schemas/member-subscription.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
+import { CountersModule } from '../counters/counters.module';
+import { MemberSubscriptionsModule } from '../member-subscriptions/member-subscriptions.module';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { Invoice, InvoiceSchema } from '../invoices/schemas/invoice.schema';
       { name: User.name, schema: UserSchema },
       { name: Invoice.name, schema: InvoiceSchema },
     ]),
+    CountersModule,
+    MemberSubscriptionsModule,
   ],
   providers: [PaymentsService],
   controllers: [PaymentsController],

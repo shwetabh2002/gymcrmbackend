@@ -244,37 +244,58 @@ export class MemberSubscriptionsService {
       );
     }
 
-    // Update payment details
-    const newTotalPaid = subscription.totalPaid + paymentAmount;
-    const newPendingAmount = subscription.planPrice - newTotalPaid;
+    await this.applyPaymentDelta(subscriptionId, paymentAmount);
 
-    let newPaymentStatus = subscription.paymentStatus;
-    if (newPendingAmount <= 0) {
-      newPaymentStatus = PaymentStatus.FULLY_PAID;
-    } else if (newTotalPaid > 0) {
-      newPaymentStatus = PaymentStatus.PARTIALLY_PAID;
-    }
+    // Re-read with populated relations for the response.
+    return this.findById(subscriptionId);
+  }
 
-    const updatedSubscription = await this.memberSubscriptionModel
+  /**
+   * Atomically adjust a subscription's paid/pending totals by `delta`
+   * (positive for a payment, negative to reverse a voided one) and recompute
+   * the derived pendingAmount and paymentStatus — all in a single
+   * aggregation-pipeline update so concurrent payments can't lose writes (P0-9).
+   */
+  async applyPaymentDelta(
+    subscriptionId: string,
+    delta: number,
+  ): Promise<MemberSubscriptionDocument | null> {
+    return this.memberSubscriptionModel
       .findByIdAndUpdate(
         subscriptionId,
-        {
-          totalPaid: newTotalPaid,
-          pendingAmount: Math.max(0, newPendingAmount),
-          paymentStatus: newPaymentStatus,
-        },
+        [
+          {
+            $set: {
+              totalPaid: { $max: [0, { $add: ['$totalPaid', delta] }] },
+            },
+          },
+          {
+            $set: {
+              pendingAmount: {
+                $max: [0, { $subtract: ['$planPrice', '$totalPaid'] }],
+              },
+              paymentStatus: {
+                $switch: {
+                  branches: [
+                    {
+                      case: {
+                        $lte: [{ $subtract: ['$planPrice', '$totalPaid'] }, 0],
+                      },
+                      then: PaymentStatus.FULLY_PAID,
+                    },
+                    {
+                      case: { $gt: ['$totalPaid', 0] },
+                      then: PaymentStatus.PARTIALLY_PAID,
+                    },
+                  ],
+                  default: PaymentStatus.UNPAID,
+                },
+              },
+            },
+          },
+        ],
         { new: true },
       )
-      .populate('memberId', '-password -refreshToken')
-      .populate('planId')
       .exec();
-
-    if (!updatedSubscription) {
-      throw new NotFoundException(
-        `Member subscription with ID ${subscriptionId} not found`,
-      );
-    }
-
-    return updatedSubscription as MemberSubscriptionDocument;
   }
 }
