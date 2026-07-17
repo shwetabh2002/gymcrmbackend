@@ -90,21 +90,19 @@ MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/backendgym
 # JWT
 JWT_ACCESS_SECRET=your-access-secret-key
 JWT_REFRESH_SECRET=your-refresh-secret-key
-JWT_ACCESS_EXPIRATION=7d
-JWT_REFRESH_EXPIRATION=365d
+JWT_ACCESS_EXPIRATION=15m
+JWT_REFRESH_EXPIRATION=7d
 ```
 
 ## Database Seeding
 
-Seed the database with an admin user:
+Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` in your `.env`, then seed the database with an admin user:
 
 ```bash
 $ npm run seed
 ```
 
-**Default Admin Credentials:**
-- Email: `admin@backendgym.com`
-- Password: `Admin@123`
+The admin is created from those environment variables. Change the password after your first login. Credentials are never printed to the logs.
 
 ## Compile and run the project
 
