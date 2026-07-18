@@ -152,7 +152,7 @@ export class AnalyticsService {
       .limit(10)
       .exec();
 
-    // New members (joined in last 30 days)
+    // New members (joined in last 30 days) — detailed list, capped at 10.
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const newMembers = await this.userModel
       .find({
@@ -162,6 +162,14 @@ export class AnalyticsService {
       .select('name email phone createdAt')
       .sort({ createdAt: -1 })
       .limit(10)
+      .exec();
+
+    // Accurate count of members joined this calendar month.
+    const newMembersThisMonth = await this.userModel
+      .countDocuments({
+        userType: UserType.MEMBER,
+        createdAt: { $gte: startOfMonth },
+      })
       .exec();
 
     return {
@@ -174,7 +182,7 @@ export class AnalyticsService {
         totalPendingAmount,
         membersNearExpiry: membersNearExpiry.length,
         membersWithPendingPayments: membersWithPendingPayments.length,
-        newMembersThisMonth: newMembers.length,
+        newMembersThisMonth,
       },
 
       // Detailed Lists
