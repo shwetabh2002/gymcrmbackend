@@ -173,29 +173,57 @@ export class MembersService {
       baseFilter.trainingType = query.training;
     }
 
-    const members = await this.userModel
-      .find(baseFilter)
-      .select('-password -refreshToken')
-      .sort({ createdAt: -1 })
-      .exec();
+    if (query.dateFrom || query.dateTo) {
+      const dateClause: Record<string, Date> = {};
+      if (query.dateFrom) {
+        dateClause.$gte = new Date(`${query.dateFrom}T00:00:00.000`);
+      }
+      if (query.dateTo) {
+        dateClause.$lte = new Date(`${query.dateTo}T23:59:59.999`);
+      }
+      baseFilter.$and = [
+        ...(baseFilter.$and || []),
+        {
+          $or: [
+            { startingDate: dateClause },
+            { startingDate: null, createdAt: dateClause },
+            { startingDate: { $exists: false }, createdAt: dateClause },
+          ],
+        },
+      ];
+    }
 
-    const enriched = await Promise.all(
-      members.map(async (member) => {
-        if (!member.membershipMonths) {
-          return member.toObject();
-        }
+    const needsInMemoryPending =
+      (query.pending && query.pending !== 'ALL') || !!query.pendingByDate;
 
-        const payments = await this.memberPaymentModel
-          .find({ memberId: member._id } as any)
+    const enrichPage = async (pageMembers: any[]) => {
+      const pageIds = pageMembers.map((m) => m._id);
+      const paymentsByMember = new Map<string, any[]>();
+      if (pageIds.length > 0) {
+        const pagePayments = await this.memberPaymentModel
+          .find({ memberId: { $in: pageIds } } as any)
+          .sort({ paymentDate: 1 })
+          .lean()
           .exec();
-
+        for (const p of pagePayments) {
+          const key = String(p.memberId);
+          if (!paymentsByMember.has(key)) paymentsByMember.set(key, []);
+          paymentsByMember.get(key)!.push(p);
+        }
+      }
+      return pageMembers.map((member) => {
+        if (!member.membershipMonths) return member;
+        const payments = paymentsByMember.get(String(member._id)) ?? [];
         const totalAmount = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
-        const totalReceived = payments.reduce((sum, p) => sum + (p.received || 0), 0);
+        const totalReceived = payments.reduce(
+          (sum, p) => sum + (p.received || 0),
+          0,
+        );
         const totalPending = Math.max(0, totalAmount - totalReceived);
-        const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
-
+        const lastPayment =
+          payments.length > 0 ? payments[payments.length - 1] : null;
         return {
-          ...member.toObject(),
+          ...member,
           paymentSummary: {
             totalReceived,
             totalPending,
@@ -205,91 +233,233 @@ export class MembersService {
             paymentCount: payments.length,
           },
         };
-      }),
-    );
-
-    const getMembershipInfo = (member: any) => {
-      const activeMembership = member.memberships?.find((m: any) => m.status === 'ACTIVE') || null;
-      if (activeMembership) {
-        return {
-          pendingAmount: activeMembership.pendingAmount ?? 0,
-          amountPaid: activeMembership.amountPaid ?? 0,
-          pendingDueDate: activeMembership.pendingDueDate ?? null,
-        };
-      }
-      return {
-        pendingAmount: member.paymentSummary?.totalPending ?? member.pending ?? 0,
-        amountPaid: member.paymentSummary?.totalReceived ?? member.received ?? 0,
-        pendingDueDate: member.pendingDueDate ?? null,
-      };
+      });
     };
 
-    const filtered = enriched.filter((member) => {
-      const membershipInfo = getMembershipInfo(member);
-      const hasPending = (membershipInfo.pendingAmount ?? 0) > 0;
+    // Fast path: pending filters not used — paginate + summary in Mongo
+    if (!needsInMemoryPending) {
+      const [total, pageMembers, summaryAgg] = await Promise.all([
+        this.userModel.countDocuments(baseFilter).exec(),
+        this.userModel
+          .find(baseFilter)
+          .select('-password -refreshToken')
+          .sort({ createdAt: -1 })
+          .skip((Math.max(1, page) - 1) * limit)
+          .limit(limit)
+          .lean()
+          .exec(),
+        this.userModel
+          .aggregate([
+            { $match: baseFilter },
+            {
+              $addFields: {
+                activeMembership: {
+                  $first: {
+                    $filter: {
+                      input: { $ifNull: ['$memberships', []] },
+                      as: 'm',
+                      cond: { $eq: ['$$m.status', 'ACTIVE'] },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              $group: {
+                _id: null,
+                totalMembers: { $sum: 1 },
+                activeMembers: {
+                  $sum: {
+                    $cond: [{ $eq: ['$memberStatus', 'ACTIVE'] }, 1, 0],
+                  },
+                },
+                ptMembers: {
+                  $sum: { $cond: [{ $eq: ['$trainingType', 'PT'] }, 1, 0] },
+                },
+                gtMembers: {
+                  $sum: { $cond: [{ $eq: ['$trainingType', 'GT'] }, 1, 0] },
+                },
+                totalReceived: {
+                  $sum: {
+                    $ifNull: [
+                      '$activeMembership.amountPaid',
+                      { $ifNull: ['$received', 0] },
+                    ],
+                  },
+                },
+                totalPending: {
+                  $sum: {
+                    $ifNull: [
+                      '$activeMembership.pendingAmount',
+                      { $ifNull: ['$pending', 0] },
+                    ],
+                  },
+                },
+              },
+            },
+          ])
+          .exec(),
+      ]);
 
-      const matchPending =
-        !query.pending ||
-        query.pending === 'ALL' ||
-        (query.pending === 'HAS_PENDING' && hasPending) ||
-        (query.pending === 'FULLY_PAID' && !hasPending);
-
-      const matchPendingByDate =
-        !query.pendingByDate ||
-        (
-          hasPending &&
-          !!membershipInfo.pendingDueDate &&
-          new Date(membershipInfo.pendingDueDate).getTime() <= new Date(query.pendingByDate).getTime()
-        );
-
-      let matchDateRange = true;
-      if (query.dateFrom || query.dateTo) {
-        const m = member as any;
-        const refRaw = m.startingDate ?? m.createdAt;
-        if (!refRaw) {
-          matchDateRange = false;
-        } else {
-          const ref = new Date(refRaw);
-          if (query.dateFrom) {
-            const from = new Date(`${query.dateFrom}T00:00:00.000`);
-            if (ref < from) matchDateRange = false;
-          }
-          if (query.dateTo) {
-            const to = new Date(`${query.dateTo}T23:59:59.999`);
-            if (ref > to) matchDateRange = false;
-          }
-        }
-      }
-
-      return matchPending && matchPendingByDate && matchDateRange;
-    });
-
-    const total = filtered.length;
-    const totalPages = Math.max(1, Math.ceil(total / limit));
-    const safePage = Math.min(Math.max(1, page), totalPages);
-    const start = (safePage - 1) * limit;
-    const data = filtered.slice(start, start + limit);
-
-    const summary = filtered.reduce(
-      (acc, member: any) => {
-        const membershipInfo = getMembershipInfo(member);
-        acc.totalMembers += 1;
-        if (member.memberStatus === 'ACTIVE') acc.activeMembers += 1;
-        if (member.trainingType === 'PT') acc.ptMembers += 1;
-        if (member.trainingType === 'GT') acc.gtMembers += 1;
-        acc.totalReceived += Number(membershipInfo.amountPaid || 0);
-        acc.totalPending += Number(membershipInfo.pendingAmount || 0);
-        return acc;
-      },
-      {
+      const totalPages = Math.max(1, Math.ceil(total / limit));
+      const safePage = Math.min(Math.max(1, page), totalPages);
+      const data = await enrichPage(pageMembers);
+      const agg = summaryAgg[0] || {
         totalMembers: 0,
         activeMembers: 0,
         totalReceived: 0,
         totalPending: 0,
         ptMembers: 0,
         gtMembers: 0,
+      };
+
+      return {
+        data,
+        pagination: {
+          total,
+          page: safePage,
+          limit,
+          totalPages,
+          hasNextPage: safePage < totalPages,
+          hasPrevPage: safePage > 1,
+        },
+        summary: {
+          totalMembers: agg.totalMembers,
+          activeMembers: agg.activeMembers,
+          totalReceived: agg.totalReceived,
+          totalPending: agg.totalPending,
+          ptMembers: agg.ptMembers,
+          gtMembers: agg.gtMembers,
+        },
+      };
+    }
+
+    // Slow path: pending / pendingByDate — filter with aggregation, then paginate
+    const pendingPipeline: any[] = [
+      { $match: baseFilter },
+      {
+        $addFields: {
+          activeMembership: {
+            $first: {
+              $filter: {
+                input: { $ifNull: ['$memberships', []] },
+                as: 'm',
+                cond: { $eq: ['$$m.status', 'ACTIVE'] },
+              },
+            },
+          },
+        },
       },
-    );
+      {
+        $addFields: {
+          _pendingAmount: {
+            $ifNull: [
+              '$activeMembership.pendingAmount',
+              { $ifNull: ['$pending', 0] },
+            ],
+          },
+          _pendingDueDate: {
+            $ifNull: ['$activeMembership.pendingDueDate', '$pendingDueDate'],
+          },
+        },
+      },
+    ];
+
+    if (query.pending === 'HAS_PENDING') {
+      pendingPipeline.push({ $match: { _pendingAmount: { $gt: 0 } } });
+    } else if (query.pending === 'FULLY_PAID') {
+      pendingPipeline.push({
+        $match: {
+          $or: [{ _pendingAmount: { $lte: 0 } }, { _pendingAmount: null }],
+        },
+      });
+    }
+
+    if (query.pendingByDate) {
+      pendingPipeline.push({
+        $match: {
+          _pendingAmount: { $gt: 0 },
+          _pendingDueDate: {
+            $ne: null,
+            $lte: new Date(query.pendingByDate),
+          },
+        },
+      });
+    }
+
+    const [filteredAgg, summaryAgg] = await Promise.all([
+      this.userModel
+        .aggregate([
+          ...pendingPipeline,
+          { $sort: { createdAt: -1 } },
+          {
+            $facet: {
+              total: [{ $count: 'count' }],
+              page: [
+                { $skip: (Math.max(1, page) - 1) * limit },
+                { $limit: limit },
+                {
+                  $project: {
+                    password: 0,
+                    refreshToken: 0,
+                    activeMembership: 0,
+                    _pendingAmount: 0,
+                    _pendingDueDate: 0,
+                  },
+                },
+              ],
+            },
+          },
+        ])
+        .exec(),
+      this.userModel
+        .aggregate([
+          ...pendingPipeline,
+          {
+            $group: {
+              _id: null,
+              totalMembers: { $sum: 1 },
+              activeMembers: {
+                $sum: {
+                  $cond: [{ $eq: ['$memberStatus', 'ACTIVE'] }, 1, 0],
+                },
+              },
+              ptMembers: {
+                $sum: { $cond: [{ $eq: ['$trainingType', 'PT'] }, 1, 0] },
+              },
+              gtMembers: {
+                $sum: { $cond: [{ $eq: ['$trainingType', 'GT'] }, 1, 0] },
+              },
+              totalReceived: {
+                $sum: {
+                  $ifNull: [
+                    '$activeMembership.amountPaid',
+                    { $ifNull: ['$received', 0] },
+                  ],
+                },
+              },
+              totalPending: {
+                $sum: { $ifNull: ['$_pendingAmount', 0] },
+              },
+            },
+          },
+        ])
+        .exec(),
+    ]);
+
+    const facet = filteredAgg[0] || { total: [], page: [] };
+    const total = facet.total[0]?.count ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit) || 1);
+    const safePage = Math.min(Math.max(1, page), totalPages);
+    const data = await enrichPage(facet.page || []);
+    const agg = summaryAgg[0] || {
+      totalMembers: 0,
+      activeMembers: 0,
+      totalReceived: 0,
+      totalPending: 0,
+      ptMembers: 0,
+      gtMembers: 0,
+    };
 
     return {
       data,
@@ -301,7 +471,14 @@ export class MembersService {
         hasNextPage: safePage < totalPages,
         hasPrevPage: safePage > 1,
       },
-      summary,
+      summary: {
+        totalMembers: agg.totalMembers,
+        activeMembers: agg.activeMembers,
+        totalReceived: agg.totalReceived,
+        totalPending: agg.totalPending,
+        ptMembers: agg.ptMembers,
+        gtMembers: agg.gtMembers,
+      },
     };
   }
 
