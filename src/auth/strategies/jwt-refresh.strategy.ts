@@ -15,10 +15,15 @@ export class JwtRefreshStrategy extends PassportStrategy(
   'jwt-refresh',
 ) {
   constructor(private configService: ConfigService) {
+    const refreshSecret = configService.get<string>('JWT_REFRESH_SECRET');
+    if (!refreshSecret) {
+      // Fail fast : no hardcoded fallback secret.
+      throw new Error('JWT_REFRESH_SECRET is not configured');
+    }
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_REFRESH_SECRET') || 'default-refresh-secret',
+      secretOrKey: refreshSecret,
       passReqToCallback: true,
     } as any);
   }

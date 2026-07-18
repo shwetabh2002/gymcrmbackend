@@ -42,8 +42,9 @@ export class AnalyticsService {
       .countDocuments({ subscriptionStatus: SubscriptionStatus.ACTIVE })
       .exec();
 
-    // Total revenue collected
+    // Total revenue collected (exclude voided payments — P0-12)
     const revenueResult = await this.paymentModel.aggregate([
+      { $match: { deletedAt: null } },
       {
         $group: {
           _id: null,
@@ -57,6 +58,7 @@ export class AnalyticsService {
     const monthlyRevenueResult = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: startOfMonth },
         },
       },
@@ -142,7 +144,7 @@ export class AnalyticsService {
 
     // Recent payments (last 10)
     const recentPayments = await this.paymentModel
-      .find()
+      .find({ deletedAt: null })
       .populate('memberId', 'name email')
       .populate('subscriptionId', 'planId')
       .select('memberId amount paymentMode paymentDate transactionId')
@@ -150,7 +152,7 @@ export class AnalyticsService {
       .limit(10)
       .exec();
 
-    // New members (joined in last 30 days)
+    // New members (joined in last 30 days) — detailed list, capped at 10.
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const newMembers = await this.userModel
       .find({
@@ -160,6 +162,14 @@ export class AnalyticsService {
       .select('name email phone createdAt')
       .sort({ createdAt: -1 })
       .limit(10)
+      .exec();
+
+    // Accurate count of members joined this calendar month.
+    const newMembersThisMonth = await this.userModel
+      .countDocuments({
+        userType: UserType.MEMBER,
+        createdAt: { $gte: startOfMonth },
+      })
       .exec();
 
     return {
@@ -172,7 +182,7 @@ export class AnalyticsService {
         totalPendingAmount,
         membersNearExpiry: membersNearExpiry.length,
         membersWithPendingPayments: membersWithPendingPayments.length,
-        newMembersThisMonth: newMembers.length,
+        newMembersThisMonth,
       },
 
       // Detailed Lists
@@ -268,8 +278,9 @@ export class AnalyticsService {
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-    // Total revenue all time
+    // Total revenue all time (exclude voided payments — P0-12)
     const totalRevenueResult = await this.paymentModel.aggregate([
+      { $match: { deletedAt: null } },
       {
         $group: {
           _id: null,
@@ -283,6 +294,7 @@ export class AnalyticsService {
     const currentMonthResult = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: startOfMonth },
         },
       },
@@ -301,6 +313,7 @@ export class AnalyticsService {
     const lastMonthResult = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: startOfLastMonth, $lte: endOfLastMonth },
         },
       },
@@ -336,6 +349,7 @@ export class AnalyticsService {
 
     // Payment mode breakdown
     const paymentModeBreakdown = await this.paymentModel.aggregate([
+      { $match: { deletedAt: null } },
       {
         $group: {
           _id: '$paymentMode',
@@ -495,6 +509,7 @@ export class AnalyticsService {
     const monthlyTrends = await this.paymentModel.aggregate([
       {
         $match: {
+          deletedAt: null,
           paymentDate: { $gte: sixMonthsAgo },
         },
       },

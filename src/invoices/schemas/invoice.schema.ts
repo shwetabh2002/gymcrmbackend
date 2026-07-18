@@ -72,6 +72,10 @@ export class Invoice {
 
   @Prop({ default: null })
   notes: string;
+
+  // Soft-delete marker (P0-12): financial records are voided, never hard-deleted.
+  @Prop({ type: Date, default: null })
+  deletedAt: Date | null;
 }
 
 export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
