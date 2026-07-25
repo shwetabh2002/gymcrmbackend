@@ -45,7 +45,7 @@ export class User {
   currentSubscriptionId: MongooseSchema.Types.ObjectId | null;
 
   // New simplified flow fields
-  @Prop({ type: String, default: null })
+  @Prop({ type: String, default: null, unique: true, sparse: true })
   idNo: string | null;
 
   @Prop({ type: Date, default: null })

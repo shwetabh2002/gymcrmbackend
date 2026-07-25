@@ -40,32 +40,87 @@ export class MembersService {
     private membersImportService: MembersImportService,
   ) {}
 
-  async create(createDto: CreateMemberDto): Promise<UserDocument> {
-    // Auto-generate idNo if not provided (format: DLF-641, DLF-642, etc.)
-    let idNo = createDto.idNo;
-    if (!idNo) {
-      // Find the last member with an idNo matching DLF- pattern
-      const lastMember = await this.userModel
-        .findOne({
-          userType: UserType.MEMBER,
-          idNo: { $exists: true, $ne: null, $regex: /^DLF-/ }
-        })
-        .sort({ createdAt: -1 })
-        .exec();
+  /**
+   * Next DLF-* id based on the highest numeric suffix (not createdAt).
+   * createdAt-based increment reused older numbers when memberships were out of order.
+   */
+  private async generateNextIdNo(): Promise<string> {
+    const result = await this.userModel
+      .aggregate<{ maxNum: number }>([
+        {
+          $match: {
+            userType: UserType.MEMBER,
+            idNo: { $regex: /^DLF-\d+$/ },
+          },
+        },
+        {
+          $project: {
+            num: {
+              $toInt: {
+                $arrayElemAt: [{ $split: ['$idNo', '-'] }, 1],
+              },
+            },
+          },
+        },
+        { $group: { _id: null, maxNum: { $max: '$num' } } },
+      ])
+      .exec();
 
-      if (lastMember && lastMember.idNo) {
-        // Parse the last idNo and increment (e.g., "DLF-641" -> 641 -> 642 -> "DLF-642")
-        const match = lastMember.idNo.match(/^DLF-(\d+)$/);
-        if (match) {
-          const lastIdNum = parseInt(match[1], 10);
-          idNo = `DLF-${lastIdNum + 1}`;
-        } else {
-          idNo = 'DLF-641'; // Start from DLF-641 if last idNo doesn't match pattern
-        }
-      } else {
-        idNo = 'DLF-641'; // Start from DLF-641 if no members exist
-      }
+    const maxNum = result[0]?.maxNum ?? 640;
+    return `DLF-${maxNum + 1}`;
+  }
+
+  /** Reject if another member already has this idNo. */
+  private async assertIdNoAvailable(
+    idNo: string,
+    excludeMemberId?: string,
+  ): Promise<void> {
+    const normalized = idNo.trim();
+    if (!normalized) {
+      throw new BadRequestException('idNo cannot be empty');
     }
+
+    const filter: Record<string, unknown> = {
+      userType: UserType.MEMBER,
+      idNo: normalized,
+    };
+    if (excludeMemberId) {
+      filter._id = { $ne: excludeMemberId };
+    }
+
+    const existing = await this.userModel.findOne(filter).select('_id name').exec();
+    if (existing) {
+      throw new ConflictException(
+        `Member ID "${normalized}" is already assigned to ${existing.name}. Use a different idNo.`,
+      );
+    }
+  }
+
+  private async resolveIdNo(
+    provided?: string | null,
+    excludeMemberId?: string,
+  ): Promise<string> {
+    const trimmed = provided?.trim();
+    if (trimmed) {
+      await this.assertIdNoAvailable(trimmed, excludeMemberId);
+      return trimmed;
+    }
+    // Retry a few times in case of concurrent auto-generates
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = await this.generateNextIdNo();
+      const clash = await this.userModel
+        .findOne({ userType: UserType.MEMBER, idNo: candidate })
+        .select('_id')
+        .exec();
+      if (!clash) return candidate;
+    }
+    throw new ConflictException(
+      'Unable to generate a unique member idNo. Please retry.',
+    );
+  }
+
+  async create(createDto: CreateMemberDto): Promise<UserDocument> {
+    const idNo = await this.resolveIdNo(createDto.idNo);
 
     // Create member with dummy password (members don't login)
     const member = new this.userModel({
@@ -80,7 +135,16 @@ export class MembersService {
       memberStatus: createDto.memberStatus || MemberStatus.ACTIVE,
     });
 
-    return member.save();
+    try {
+      return await member.save();
+    } catch (err: unknown) {
+      if ((err as { code?: number })?.code === 11000) {
+        throw new ConflictException(
+          `Member ID "${idNo}" already exists. Please use a different idNo.`,
+        );
+      }
+      throw err;
+    }
   }
 
   async findAll(): Promise<any[]> {
@@ -548,6 +612,16 @@ export class MembersService {
       throw new NotFoundException(`Member with ID ${id} not found`);
     }
 
+    if (
+      Object.prototype.hasOwnProperty.call(payload, 'idNo') &&
+      payload.idNo != null &&
+      String(payload.idNo).trim() !== '' &&
+      String(payload.idNo).trim() !== member.idNo
+    ) {
+      await this.assertIdNoAvailable(String(payload.idNo), id);
+      payload.idNo = String(payload.idNo).trim();
+    }
+
     Object.assign(member, payload);
 
     // Keep active membership pendingDueDate in sync for older/existing users edited from UI.
@@ -630,31 +704,7 @@ export class MembersService {
         ? registerDto.pending
         : Math.max(0, finalAmount - registerDto.received);
 
-    // Auto-generate idNo if not provided (format: DLF-641, DLF-642, etc.)
-    let idNo = registerDto.idNo;
-    if (!idNo) {
-      // Find the last member with an idNo matching DLF- pattern
-      const lastMember = await this.userModel
-        .findOne({
-          userType: UserType.MEMBER,
-          idNo: { $exists: true, $ne: null, $regex: /^DLF-/ }
-        })
-        .sort({ createdAt: -1 })
-        .exec();
-
-      if (lastMember && lastMember.idNo) {
-        // Parse the last idNo and increment (e.g., "DLF-641" -> 641 -> 642 -> "DLF-642")
-        const match = lastMember.idNo.match(/^DLF-(\d+)$/);
-        if (match) {
-          const lastIdNum = parseInt(match[1], 10);
-          idNo = `DLF-${lastIdNum + 1}`;
-        } else {
-          idNo = 'DLF-641'; // Start from DLF-641 if last idNo doesn't match pattern
-        }
-      } else {
-        idNo = 'DLF-641'; // Start from DLF-641 if no members exist
-      }
-    }
+    const idNo = await this.resolveIdNo(registerDto.idNo);
 
     // Create member with all details
     const member = new this.userModel({
@@ -712,7 +762,17 @@ export class MembersService {
       }],
     });
 
-    const savedMember = await member.save();
+    let savedMember: UserDocument;
+    try {
+      savedMember = await member.save();
+    } catch (err: unknown) {
+      if ((err as { code?: number })?.code === 11000) {
+        throw new ConflictException(
+          `Member ID "${idNo}" already exists. Please use a different idNo.`,
+        );
+      }
+      throw err;
+    }
 
     // Create payment/invoice record linked to the first membership
     const payment = new this.memberPaymentModel({
@@ -1224,6 +1284,24 @@ export class MembersService {
           continue;
         }
 
+        // idNo must be unique across members
+        const existingIdNo = await this.userModel
+          .findOne({
+            idNo: memberData.idNo,
+            userType: UserType.MEMBER,
+          })
+          .select('_id name')
+          .exec();
+        if (existingIdNo) {
+          results.errors.push({
+            row: rowNumber,
+            name: memberData.name,
+            error: `Member ID "${memberData.idNo}" already assigned to ${existingIdNo.name}`,
+          });
+          results.failed++;
+          continue;
+        }
+
         // Validate salesPerson if provided
         if (memberData.salesPerson) {
           const salesEmployee = await this.employeeModel
@@ -1313,7 +1391,21 @@ export class MembersService {
           }],
         });
 
-        const savedMember = await member.save();
+        let savedMember: UserDocument;
+        try {
+          savedMember = await member.save();
+        } catch (err: unknown) {
+          if ((err as { code?: number })?.code === 11000) {
+            results.errors.push({
+              row: rowNumber,
+              name: memberData.name,
+              error: `Member ID "${memberData.idNo}" already exists`,
+            });
+            results.failed++;
+            continue;
+          }
+          throw err;
+        }
 
         // Get the created membership ID
         const membershipId = savedMember.memberships[0]._id;

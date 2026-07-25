@@ -20,7 +20,10 @@ export class UserIndexesService implements OnModuleInit {
       this.logger.log('User collection indexes synced.');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`User index sync: ${msg}`);
+      // Existing duplicate idNo values block the unique sparse index until cleaned.
+      this.logger.warn(
+        `User index sync: ${msg}. If this mentions idNo, resolve duplicate idNo values in users collection then restart.`,
+      );
     }
   }
 }
