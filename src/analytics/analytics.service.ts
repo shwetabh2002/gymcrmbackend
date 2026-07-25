@@ -1005,71 +1005,121 @@ export class AnalyticsService {
   }
 
   /**
-   * Members whose current membership has already expired
-   * (ACTIVE membership / subscription with expiryDate in the past,
-   * and no other ACTIVE membership still valid).
+   * Expired = member's latest subscription end date has already passed
+   * (and they have not renewed — no later/valid membership after that).
    */
   async getExpiredMembers() {
     const now = new Date();
     const LIST_LIMIT = 100;
 
-    // Detailed flow: ACTIVE + past expiry, and no other still-valid ACTIVE sub
-    const expiredDetailedFlow = await this.memberSubscriptionModel
-      .find({
-        subscriptionStatus: SubscriptionStatus.ACTIVE,
-        expiryDate: { $lt: now },
-      })
-      .populate('memberId', 'name email phone')
-      .populate('planId', 'name price')
-      .select('memberId planId expiryDate pendingAmount paymentStatus')
-      .sort({ expiryDate: -1 })
-      .exec();
-
-    const memberIdsWithValidSub = new Set(
-      (
-        await this.memberSubscriptionModel
-          .find({
-            subscriptionStatus: SubscriptionStatus.ACTIVE,
-            expiryDate: { $gte: now },
-          })
-          .select('memberId')
-          .lean()
-          .exec()
-      ).map((s: any) => String(s.memberId)),
-    );
-
-    // Simplified flow: has expired ACTIVE membership, and no still-valid ACTIVE one
-    const usersWithExpiredMemberships = await this.userModel
-      .find({
-        userType: UserType.MEMBER,
-        memberships: {
-          $elemMatch: {
-            status: 'ACTIVE',
-            expiryDate: { $lt: now },
-          },
-        },
-        $nor: [
-          {
-            memberships: {
-              $elemMatch: {
-                status: 'ACTIVE',
-                expiryDate: { $gte: now },
+    // Simplified flow (main CRM path): pick latest membership per user
+    const simplifiedAgg = await this.userModel
+      .aggregate([
+        { $match: { userType: UserType.MEMBER } },
+        {
+          $addFields: {
+            latestMembership: {
+              $first: {
+                $sortArray: {
+                  input: { $ifNull: ['$memberships', []] },
+                  sortBy: { expiryDate: -1, startDate: -1 },
+                },
               },
             },
           },
-        ],
-      })
-      .select('name email phone memberships')
+        },
+        {
+          $match: {
+            'latestMembership.expiryDate': { $exists: true, $ne: null, $lt: now },
+          },
+        },
+        { $sort: { 'latestMembership.expiryDate': -1 } },
+        {
+          $project: {
+            name: 1,
+            email: 1,
+            phone: 1,
+            latestMembership: 1,
+          },
+        },
+      ])
+      .exec();
+
+    // Detailed flow subscriptions
+    const detailedAgg = await this.memberSubscriptionModel
+      .aggregate([
+        {
+          $sort: { expiryDate: -1 },
+        },
+        {
+          $group: {
+            _id: '$memberId',
+            latest: { $first: '$$ROOT' },
+          },
+        },
+        {
+          $match: {
+            'latest.expiryDate': { $lt: now },
+          },
+        },
+        { $sort: { 'latest.expiryDate': -1 } },
+        {
+          $lookup: {
+            from: 'users',
+            localField: '_id',
+            foreignField: '_id',
+            as: 'member',
+          },
+        },
+        { $unwind: { path: '$member', preserveNullAndEmptyArrays: true } },
+        {
+          $lookup: {
+            from: 'subscriptionplans',
+            localField: 'latest.planId',
+            foreignField: '_id',
+            as: 'plan',
+          },
+        },
+        { $unwind: { path: '$plan', preserveNullAndEmptyArrays: true } },
+      ])
       .exec();
 
     const expiredList: any[] = [];
     const seen = new Set<string>();
 
-    expiredDetailedFlow.forEach((sub: any) => {
-      const memberKey = String(sub.memberId?._id || sub.memberId || '');
-      if (!memberKey || memberIdsWithValidSub.has(memberKey)) return;
-      if (seen.has(memberKey)) return;
-      seen.add(memberKey);
+    for (const row of simplifiedAgg) {
+      const key = String(row._id);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const m = row.latestMembership;
+      const daysOverdue = Math.max(
+        1,
+        Math.ceil(
+          (now.getTime() - new Date(m.expiryDate).getTime()) /
+            (1000 * 60 * 60 * 24),
+        ),
+      );
+      expiredList.push({
+        memberName: row.name || 'Unknown',
+        email: row.email || '',
+        phone: row.phone || '',
+        planName: m.package || 'Standard',
+        expiryDate: m.expiryDate,
+        daysOverdue,
+        pendingAmount: m.pendingAmount || 0,
+        paymentStatus: (m.pendingAmount || 0) > 0 ? 'PENDING' : 'COMPLETED',
+        flow: 'simplified',
+      });
+    }
+
+    for (const row of detailedAgg) {
+      const key = String(row._id);
+      if (seen.has(key)) continue;
+      // Skip if this member already has a simplified memberships array entry handled above
+      // (seen already covers). Also skip if they somehow have valid simplified membership —
+      // already excluded by simplified query.
+      seen.add(key);
+      const sub = row.latest;
       const daysOverdue = Math.max(
         1,
         Math.ceil(
@@ -1078,56 +1128,17 @@ export class AnalyticsService {
         ),
       );
       expiredList.push({
-        memberName: sub.memberId?.name || 'Unknown',
-        email: sub.memberId?.email || '',
-        phone: sub.memberId?.phone || '',
-        planName: sub.planId?.name || 'Unknown Plan',
+        memberName: row.member?.name || 'Unknown',
+        email: row.member?.email || '',
+        phone: row.member?.phone || '',
+        planName: row.plan?.name || 'Unknown Plan',
         expiryDate: sub.expiryDate,
         daysOverdue,
         pendingAmount: sub.pendingAmount || 0,
         paymentStatus: sub.paymentStatus,
         flow: 'detailed',
       });
-    });
-
-    usersWithExpiredMemberships.forEach((user: any) => {
-      const key = String(user._id);
-      if (seen.has(key)) return;
-
-      const expiredActive = (user.memberships || [])
-        .filter(
-          (m: any) =>
-            m.status === 'ACTIVE' && new Date(m.expiryDate) < now,
-        )
-        .sort(
-          (a: any, b: any) =>
-            new Date(b.expiryDate).getTime() - new Date(a.expiryDate).getTime(),
-        );
-
-      if (expiredActive.length === 0) return;
-      seen.add(key);
-
-      const membership = expiredActive[0];
-      const daysOverdue = Math.max(
-        1,
-        Math.ceil(
-          (now.getTime() - new Date(membership.expiryDate).getTime()) /
-            (1000 * 60 * 60 * 24),
-        ),
-      );
-      expiredList.push({
-        memberName: user.name || 'Unknown',
-        email: user.email || '',
-        phone: user.phone || '',
-        planName: membership.package || 'Standard',
-        expiryDate: membership.expiryDate,
-        daysOverdue,
-        pendingAmount: membership.pendingAmount || 0,
-        paymentStatus:
-          membership.pendingAmount > 0 ? 'PENDING' : 'COMPLETED',
-        flow: 'simplified',
-      });
-    });
+    }
 
     expiredList.sort(
       (a, b) =>
