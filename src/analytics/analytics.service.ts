@@ -1005,6 +1005,143 @@ export class AnalyticsService {
   }
 
   /**
+   * Members whose current membership has already expired
+   * (ACTIVE membership / subscription with expiryDate in the past,
+   * and no other ACTIVE membership still valid).
+   */
+  async getExpiredMembers() {
+    const now = new Date();
+    const LIST_LIMIT = 100;
+
+    // Detailed flow: ACTIVE + past expiry, and no other still-valid ACTIVE sub
+    const expiredDetailedFlow = await this.memberSubscriptionModel
+      .find({
+        subscriptionStatus: SubscriptionStatus.ACTIVE,
+        expiryDate: { $lt: now },
+      })
+      .populate('memberId', 'name email phone')
+      .populate('planId', 'name price')
+      .select('memberId planId expiryDate pendingAmount paymentStatus')
+      .sort({ expiryDate: -1 })
+      .exec();
+
+    const memberIdsWithValidSub = new Set(
+      (
+        await this.memberSubscriptionModel
+          .find({
+            subscriptionStatus: SubscriptionStatus.ACTIVE,
+            expiryDate: { $gte: now },
+          })
+          .select('memberId')
+          .lean()
+          .exec()
+      ).map((s: any) => String(s.memberId)),
+    );
+
+    // Simplified flow: has expired ACTIVE membership, and no still-valid ACTIVE one
+    const usersWithExpiredMemberships = await this.userModel
+      .find({
+        userType: UserType.MEMBER,
+        memberships: {
+          $elemMatch: {
+            status: 'ACTIVE',
+            expiryDate: { $lt: now },
+          },
+        },
+        $nor: [
+          {
+            memberships: {
+              $elemMatch: {
+                status: 'ACTIVE',
+                expiryDate: { $gte: now },
+              },
+            },
+          },
+        ],
+      })
+      .select('name email phone memberships')
+      .exec();
+
+    const expiredList: any[] = [];
+    const seen = new Set<string>();
+
+    expiredDetailedFlow.forEach((sub: any) => {
+      const memberKey = String(sub.memberId?._id || sub.memberId || '');
+      if (!memberKey || memberIdsWithValidSub.has(memberKey)) return;
+      if (seen.has(memberKey)) return;
+      seen.add(memberKey);
+      const daysOverdue = Math.max(
+        1,
+        Math.ceil(
+          (now.getTime() - new Date(sub.expiryDate).getTime()) /
+            (1000 * 60 * 60 * 24),
+        ),
+      );
+      expiredList.push({
+        memberName: sub.memberId?.name || 'Unknown',
+        email: sub.memberId?.email || '',
+        phone: sub.memberId?.phone || '',
+        planName: sub.planId?.name || 'Unknown Plan',
+        expiryDate: sub.expiryDate,
+        daysOverdue,
+        pendingAmount: sub.pendingAmount || 0,
+        paymentStatus: sub.paymentStatus,
+        flow: 'detailed',
+      });
+    });
+
+    usersWithExpiredMemberships.forEach((user: any) => {
+      const key = String(user._id);
+      if (seen.has(key)) return;
+
+      const expiredActive = (user.memberships || [])
+        .filter(
+          (m: any) =>
+            m.status === 'ACTIVE' && new Date(m.expiryDate) < now,
+        )
+        .sort(
+          (a: any, b: any) =>
+            new Date(b.expiryDate).getTime() - new Date(a.expiryDate).getTime(),
+        );
+
+      if (expiredActive.length === 0) return;
+      seen.add(key);
+
+      const membership = expiredActive[0];
+      const daysOverdue = Math.max(
+        1,
+        Math.ceil(
+          (now.getTime() - new Date(membership.expiryDate).getTime()) /
+            (1000 * 60 * 60 * 24),
+        ),
+      );
+      expiredList.push({
+        memberName: user.name || 'Unknown',
+        email: user.email || '',
+        phone: user.phone || '',
+        planName: membership.package || 'Standard',
+        expiryDate: membership.expiryDate,
+        daysOverdue,
+        pendingAmount: membership.pendingAmount || 0,
+        paymentStatus:
+          membership.pendingAmount > 0 ? 'PENDING' : 'COMPLETED',
+        flow: 'simplified',
+      });
+    });
+
+    expiredList.sort(
+      (a, b) =>
+        new Date(b.expiryDate).getTime() - new Date(a.expiryDate).getTime(),
+    );
+
+    return {
+      count: expiredList.length,
+      members: expiredList.slice(0, LIST_LIMIT),
+      showing: Math.min(LIST_LIMIT, expiredList.length),
+    };
+  }
+
+  /**
    * Get recent payment updates/activity from BOTH flows with more details
    */
   async getPaymentUpdates(limit: number = 20) {

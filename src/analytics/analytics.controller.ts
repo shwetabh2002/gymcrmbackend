@@ -47,6 +47,11 @@ export class AnalyticsController {
     return this.analyticsService.getMembersExpiringIn7Days();
   }
 
+  @Get('expired-members')
+  async getExpiredMembers() {
+    return this.analyticsService.getExpiredMembers();
+  }
+
   @Get('payment-updates')
   async getPaymentUpdates() {
     return this.analyticsService.getPaymentUpdates(20);
