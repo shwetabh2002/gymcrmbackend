@@ -1,0 +1,7 @@
+export enum MandateStatus {
+  CREATED = 'CREATED',
+  ACTIVE = 'ACTIVE',
+  PAUSED = 'PAUSED',
+  CANCELLED = 'CANCELLED',
+  REJECTED = 'REJECTED',
+}

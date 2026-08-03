@@ -9,49 +9,130 @@ import {
   HttpCode,
   HttpStatus,
   UseGuards,
+  Request,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { MembersService } from './members.service';
 import { CreateMemberDto } from './dto/create-member.dto';
 import { UpdateMemberDto } from './dto/update-member.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '../common/enums/role.enum';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
+import { RequirePermissions } from '../common/decorators/permissions.decorator';
+import { Permission } from '../common/enums/permission.enum';
+import { CompanyId } from '../common/tenant/company-id.decorator';
+import {
+  LocationScope,
+  WriteLocationId,
+} from '../common/tenant/location.decorator';
+import { getUploadLimits } from '../config/upload.config';
+
+function actorFromReq(req: any) {
+  return req?.user
+    ? { userId: req.user.userId, name: req.user.name || req.user.email }
+    : undefined;
+}
 
 @Controller('members')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.MANAGER)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 
   @Post()
+  @RequirePermissions(Permission.MEMBERS_CREATE)
   @HttpCode(HttpStatus.CREATED)
-  async create(@Body() createDto: CreateMemberDto) {
-    return this.membersService.create(createDto);
+  async create(
+    @CompanyId() companyId: string,
+    @WriteLocationId() locationId: string,
+    @Body() createDto: CreateMemberDto,
+    @Request() req,
+  ) {
+    return this.membersService.create(
+      companyId,
+      locationId,
+      createDto,
+      req.user?.userId,
+      actorFromReq(req),
+    );
   }
 
   @Get()
+  @RequirePermissions(Permission.MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
-  async findAll() {
-    return this.membersService.findAll();
+  async findAll(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+  ) {
+    return this.membersService.findAll(companyId, locScope);
   }
 
   @Get(':id')
+  @RequirePermissions(Permission.MEMBERS_VIEW)
   @HttpCode(HttpStatus.OK)
-  async findById(@Param('id') id: string) {
-    return this.membersService.findById(id);
+  async findById(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+    @Param('id') id: string,
+  ) {
+    return this.membersService.findById(companyId, id, locScope);
+  }
+
+  @Post(':id/photo')
+  @RequirePermissions(Permission.MEMBERS_UPDATE, Permission.MEMBERS_CREATE)
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: getUploadLimits().maxFileBytes },
+    }),
+  )
+  async uploadPhoto(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('file is required');
+    return this.membersService.uploadPhoto(companyId, id, file, locScope);
   }
 
   @Put(':id')
+  @RequirePermissions(Permission.MEMBERS_UPDATE, Permission.MEMBERS_CREATE)
   @HttpCode(HttpStatus.OK)
-  async update(@Param('id') id: string, @Body() updateDto: UpdateMemberDto) {
-    return this.membersService.update(id, updateDto);
+  async update(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+    @Param('id') id: string,
+    @Body() updateDto: UpdateMemberDto,
+    @Request() req,
+  ) {
+    return this.membersService.update(
+      companyId,
+      id,
+      updateDto,
+      actorFromReq(req),
+      locScope,
+    );
   }
 
   @Delete(':id')
+  @RequirePermissions(Permission.MEMBERS_DELETE)
   @HttpCode(HttpStatus.OK)
-  async delete(@Param('id') id: string) {
-    await this.membersService.delete(id);
+  async delete(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+    @Param('id') id: string,
+    @Request() req,
+  ) {
+    await this.membersService.delete(
+      companyId,
+      id,
+      actorFromReq(req),
+      locScope,
+    );
     return { message: 'Member deleted successfully' };
   }
 }

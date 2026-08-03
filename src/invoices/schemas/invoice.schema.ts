@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Schema as MongooseSchema } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 
 export type InvoiceDocument = Invoice & Document;
 
@@ -10,7 +10,23 @@ export interface InvoiceItem {
 
 @Schema({ timestamps: true })
 export class Invoice {
-  @Prop({ required: true, unique: true })
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Company',
+    required: true,
+    index: true,
+  })
+  companyId: Types.ObjectId;
+
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Location',
+    required: true,
+    index: true,
+  })
+  locationId: Types.ObjectId;
+
+  @Prop({ required: true })
   invoiceNumber: string;
 
   @Prop({
@@ -47,6 +63,10 @@ export class Invoice {
   @Prop({ default: 0 })
   taxAmount: number;
 
+  /** Snapshot: how tax was applied when invoice was created */
+  @Prop({ type: String, default: 'excluded' })
+  taxMode: string;
+
   @Prop({ required: true })
   totalAmount: number;
 
@@ -79,3 +99,6 @@ export class Invoice {
 }
 
 export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
+InvoiceSchema.index({ companyId: 1, invoiceNumber: 1 }, { unique: true });
+InvoiceSchema.index({ companyId: 1, createdAt: -1 });
+

@@ -6,7 +6,7 @@ import { Request } from 'express';
 
 export interface JwtRefreshPayload {
   sub: string;
-  email: string;
+  email: string | null;
 }
 
 @Injectable()

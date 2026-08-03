@@ -16,18 +16,27 @@ export class SubscriptionPlansService {
   ) {}
 
   async create(
+    companyId: string,
     createDto: CreateSubscriptionPlanDto,
   ): Promise<SubscriptionPlanDocument> {
-    const plan = new this.subscriptionPlanModel(createDto);
+    const plan = new this.subscriptionPlanModel({
+      ...createDto,
+      companyId,
+    });
     return plan.save();
   }
 
-  async findAll(): Promise<SubscriptionPlanDocument[]> {
-    return this.subscriptionPlanModel.find().exec();
+  async findAll(companyId: string): Promise<SubscriptionPlanDocument[]> {
+    return this.subscriptionPlanModel.find({ companyId }).exec();
   }
 
-  async findById(id: string): Promise<SubscriptionPlanDocument> {
-    const plan = await this.subscriptionPlanModel.findById(id).exec();
+  async findById(
+    companyId: string,
+    id: string,
+  ): Promise<SubscriptionPlanDocument> {
+    const plan = await this.subscriptionPlanModel
+      .findOne({ _id: id, companyId })
+      .exec();
     if (!plan) {
       throw new NotFoundException(`Subscription plan with ID ${id} not found`);
     }
@@ -35,11 +44,15 @@ export class SubscriptionPlansService {
   }
 
   async update(
+    companyId: string,
     id: string,
     updateDto: UpdateSubscriptionPlanDto,
   ): Promise<SubscriptionPlanDocument> {
+    const { companyId: _ignore, ...safeUpdate } = updateDto as any;
     const plan = await this.subscriptionPlanModel
-      .findByIdAndUpdate(id, updateDto, { new: true })
+      .findOneAndUpdate({ _id: id, companyId }, safeUpdate, {
+        returnDocument: 'after',
+      })
       .exec();
 
     if (!plan) {
@@ -49,8 +62,10 @@ export class SubscriptionPlansService {
     return plan;
   }
 
-  async delete(id: string): Promise<void> {
-    const result = await this.subscriptionPlanModel.findByIdAndDelete(id).exec();
+  async delete(companyId: string, id: string): Promise<void> {
+    const result = await this.subscriptionPlanModel
+      .findOneAndDelete({ _id: id, companyId })
+      .exec();
     if (!result) {
       throw new NotFoundException(`Subscription plan with ID ${id} not found`);
     }

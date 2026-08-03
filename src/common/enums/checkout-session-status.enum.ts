@@ -1,0 +1,8 @@
+export enum CheckoutSessionStatus {
+  PENDING = 'PENDING',
+  MANDATE_PENDING = 'MANDATE_PENDING',
+  PAID = 'PAID',
+  FAILED = 'FAILED',
+  EXPIRED = 'EXPIRED',
+  CANCELLED = 'CANCELLED',
+}

@@ -1,14 +1,22 @@
 import {
   Injectable,
   UnauthorizedException,
-  BadRequestException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
 import { Role } from '../common/enums/role.enum';
+import { AccountStatus } from '../common/enums/account-status.enum';
+import { getEffectivePermissions } from '../common/constants/permissions';
+import { Company, CompanyDocument } from '../companies/schemas/company.schema';
+import {
+  Location,
+  LocationDocument,
+} from '../locations/schemas/location.schema';
 
 @Injectable()
 export class AuthService {
@@ -16,6 +24,10 @@ export class AuthService {
     private usersService: UsersService,
     private jwtService: JwtService,
     private configService: ConfigService,
+    @InjectModel(Company.name)
+    private companyModel: Model<CompanyDocument>,
+    @InjectModel(Location.name)
+    private locationModel: Model<LocationDocument>,
   ) {}
 
   async adminLogin(loginDto: LoginDto) {
@@ -25,9 +37,23 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    // Check if user has admin privileges
-    if (user.role !== Role.ADMIN && user.role !== Role.SUPER_ADMIN) {
-      throw new UnauthorizedException('Access denied. Admin privileges required');
+    const staffRoles = [
+      Role.SUPER_ADMIN,
+      Role.ADMIN,
+      Role.MANAGER,
+      Role.STAFF,
+      Role.TRAINER,
+      Role.SALES,
+    ];
+
+    if (!staffRoles.includes(user.role)) {
+      throw new UnauthorizedException(
+        'Access denied. Staff login privileges required',
+      );
+    }
+
+    if (user.accountStatus === AccountStatus.INACTIVE) {
+      throw new UnauthorizedException('Account is inactive. Contact admin.');
     }
 
     const isPasswordValid = await bcrypt.compare(
@@ -39,11 +65,24 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const tokens = await this.generateTokens(user);
+    return this.loginAsUser(user);
+  }
 
-    // Hash and store refresh token
+  async loginAsUser(user: any) {
+    const tokens = await this.generateTokens(user);
+    const permissions = getEffectivePermissions(
+      user.role,
+      user.customPermissions,
+    );
+
     const hashedRefreshToken = await bcrypt.hash(tokens.refreshToken, 10);
-    await this.usersService.updateRefreshToken(user._id.toString(), hashedRefreshToken);
+    await this.usersService.updateRefreshToken(
+      user._id.toString(),
+      hashedRefreshToken,
+    );
+
+    const company = await this.resolveCompanyContext(user);
+    const location = await this.resolveLocationContext(user);
 
     return {
       user: {
@@ -51,8 +90,59 @@ export class AuthService {
         email: user.email,
         name: user.name,
         role: user.role,
+        userType: user.userType,
+        permissions,
+        customPermissions: user.customPermissions ?? null,
+        companyId: company.companyId,
+        companyName: company.companyName,
+        locationId: location.locationId,
+        locationName: location.locationName,
       },
       tokens,
+    };
+  }
+
+  private async resolveCompanyContext(user: any): Promise<{
+    companyId: string | null;
+    companyName: string | null;
+  }> {
+    let companyId: string | null = null;
+
+    if (user.role === Role.SUPER_ADMIN) {
+      companyId = user.activeCompanyId
+        ? user.activeCompanyId.toString()
+        : null;
+    } else if (user.companyId) {
+      companyId = user.companyId.toString();
+    }
+
+    if (!companyId) {
+      return { companyId: null, companyName: null };
+    }
+
+    const company = await this.companyModel.findById(companyId).exec();
+    return {
+      companyId,
+      companyName: company?.name ?? null,
+    };
+  }
+
+  private async resolveLocationContext(user: any): Promise<{
+    locationId: string | null;
+    locationName: string | null;
+  }> {
+    if (!user.activeLocationId) {
+      return { locationId: null, locationName: null };
+    }
+    const loc = await this.locationModel
+      .findById(user.activeLocationId)
+      .exec();
+    if (!loc) {
+      return { locationId: null, locationName: null };
+    }
+    return {
+      locationId: loc._id.toString(),
+      locationName: loc.name,
     };
   }
 
@@ -74,9 +164,11 @@ export class AuthService {
 
     const tokens = await this.generateTokens(user);
 
-    // Hash and store new refresh token
     const hashedRefreshToken = await bcrypt.hash(tokens.refreshToken, 10);
-    await this.usersService.updateRefreshToken(user._id.toString(), hashedRefreshToken);
+    await this.usersService.updateRefreshToken(
+      user._id.toString(),
+      hashedRefreshToken,
+    );
 
     return tokens;
   }
@@ -88,11 +180,27 @@ export class AuthService {
 
   private async generateTokens(user: any) {
     const userId = user._id ? user._id.toString() : user.id;
+
+    let companyId: string | null = null;
+    if (user.role === Role.SUPER_ADMIN) {
+      companyId = user.activeCompanyId
+        ? user.activeCompanyId.toString()
+        : null;
+    } else if (user.companyId) {
+      companyId = user.companyId.toString();
+    }
+
+    const locationId = user.activeLocationId
+      ? user.activeLocationId.toString()
+      : null;
+
     const payload = {
       sub: userId,
       email: user.email,
       role: user.role,
       name: user.name,
+      companyId,
+      locationId,
     };
 
     const [accessToken, refreshToken] = await Promise.all([

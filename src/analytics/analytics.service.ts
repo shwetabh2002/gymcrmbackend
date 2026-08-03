@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import {
   MemberSubscription,
@@ -9,7 +9,8 @@ import {
 import { Payment, PaymentDocument } from '../payments/schemas/payment.schema';
 import { UserType } from '../common/enums/user-type.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
-import { PaymentStatus } from '../common/enums/payment-status.enum';
+import { RenewalFollowUpStatus } from '../common/enums/renewal-follow-up-status.enum';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
 @Injectable()
 export class AnalyticsService {
@@ -18,100 +19,310 @@ export class AnalyticsService {
     @InjectModel(MemberSubscription.name)
     private memberSubscriptionModel: Model<MemberSubscriptionDocument>,
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
+    private activityLogsService: ActivityLogsService,
   ) {}
+
+  private cid(companyId: string) {
+    return new Types.ObjectId(companyId);
+  }
+
+  /** Match filter for company (+ optional location) queries / aggregates */
+  private tenantMatch(
+    companyId: string,
+    locScope: { locationId?: string } = {},
+  ): Record<string, unknown> {
+    const match: Record<string, unknown> = {
+      companyId: this.cid(companyId),
+    };
+    if (locScope.locationId) {
+      match.locationId = new Types.ObjectId(locScope.locationId);
+    }
+    return match;
+  }
 
   /**
    * Get dashboard overview with key metrics and detailed lists
    */
-  async getDashboardOverview() {
+  async getDashboardOverview(companyId: string, locScope: { locationId?: string } = {}) {
+    const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const endOfLastMonth = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      0,
+      23,
+      59,
+      59,
+    );
     const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
     const thirtyDaysFromNow = new Date(
       now.getTime() + 30 * 24 * 60 * 60 * 1000,
     );
 
-    // ===== COUNTS =====
-    // Total members count
-    const totalMembers = await this.userModel
-      .countDocuments({ userType: UserType.MEMBER })
-      .exec();
-
-    // Active subscriptions count
-    const activeSubscriptionsCount = await this.memberSubscriptionModel
-      .countDocuments({ subscriptionStatus: SubscriptionStatus.ACTIVE })
-      .exec();
-
-    // Total revenue collected (exclude voided payments — P0-12)
-    const revenueResult = await this.paymentModel.aggregate([
-      { $match: { deletedAt: null } },
-      {
-        $group: {
-          _id: null,
-          totalRevenue: { $sum: '$amount' },
+    const [
+      totalMembers,
+      activeSubscriptionsCount,
+      expiredSubscriptionsCount,
+      revenueResult,
+      monthlyRevenueResult,
+      lastMonthRevenueResult,
+      pendingAmountResult,
+      membersWithPendingCount,
+      membersNearExpiryCount,
+      expiringIn30Days,
+      newMembersThisMonth,
+      paymentModeBreakdown,
+      renewalStatusBreakdown,
+      activityFeed,
+      activeMembers,
+      membersNearExpiry,
+      membersWithPendingPayments,
+      recentPayments,
+      newMembers,
+    ] = await Promise.all([
+      this.userModel
+        .countDocuments({ ...tenant, userType: UserType.MEMBER })
+        .exec(),
+      this.memberSubscriptionModel
+        .countDocuments({
+          ...tenant,
+          subscriptionStatus: SubscriptionStatus.ACTIVE,
+        })
+        .exec(),
+      this.memberSubscriptionModel
+        .countDocuments({
+          ...tenant,
+          subscriptionStatus: SubscriptionStatus.EXPIRED,
+        })
+        .exec(),
+      this.paymentModel.aggregate([
+        { $match: { ...tenant, deletedAt: null } },
+        {
+          $group: {
+            _id: null,
+            totalRevenue: { $sum: '$amount' },
+            count: { $sum: 1 },
+          },
         },
-      },
-    ]);
-    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
-
-    // Monthly revenue (current month)
-    const monthlyRevenueResult = await this.paymentModel.aggregate([
-      {
-        $match: {
-          deletedAt: null,
-          paymentDate: { $gte: startOfMonth },
+      ]),
+      this.paymentModel.aggregate([
+        {
+          $match: {
+            ...tenant,
+            deletedAt: null,
+            paymentDate: { $gte: startOfMonth },
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          monthlyRevenue: { $sum: '$amount' },
+        {
+          $group: {
+            _id: null,
+            monthlyRevenue: { $sum: '$amount' },
+            count: { $sum: 1 },
+          },
         },
-      },
-    ]);
-    const monthlyRevenue = monthlyRevenueResult[0]?.monthlyRevenue || 0;
-
-    // Pending amount (all subscriptions)
-    const pendingAmountResult = await this.memberSubscriptionModel.aggregate([
-      {
-        $match: {
+      ]),
+      this.paymentModel.aggregate([
+        {
+          $match: {
+            ...tenant,
+            deletedAt: null,
+            paymentDate: { $gte: startOfLastMonth, $lte: endOfLastMonth },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            revenue: { $sum: '$amount' },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      this.memberSubscriptionModel.aggregate([
+        {
+          $match: {
+            ...tenant,
+            subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+          },
+        },
+        {
+          $group: {
+            _id: null,
+            totalPending: { $sum: '$pendingAmount' },
+          },
+        },
+      ]),
+      this.memberSubscriptionModel
+        .countDocuments({
+          ...tenant,
           subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+          pendingAmount: { $gt: 0 },
+        })
+        .exec(),
+      this.memberSubscriptionModel
+        .countDocuments({
+          ...tenant,
+          subscriptionStatus: SubscriptionStatus.ACTIVE,
+          expiryDate: { $gte: now, $lte: sevenDaysFromNow },
+        })
+        .exec(),
+      this.memberSubscriptionModel
+        .countDocuments({
+          ...tenant,
+          subscriptionStatus: SubscriptionStatus.ACTIVE,
+          expiryDate: { $gte: now, $lte: thirtyDaysFromNow },
+        })
+        .exec(),
+      this.userModel
+        .countDocuments({
+          ...tenant,
+          userType: UserType.MEMBER,
+          createdAt: { $gte: startOfMonth },
+        })
+        .exec(),
+      this.paymentModel.aggregate([
+        { $match: { ...tenant, deletedAt: null } },
+        {
+          $group: {
+            _id: '$paymentMode',
+            total: { $sum: '$amount' },
+            count: { $sum: 1 },
+          },
         },
-      },
-      {
-        $group: {
-          _id: null,
-          totalPending: { $sum: '$pendingAmount' },
+        { $sort: { total: -1 } },
+      ]),
+      this.memberSubscriptionModel.aggregate([
+        {
+          $match: {
+            ...tenant,
+            $or: [
+              {
+                subscriptionStatus: {
+                  $in: [
+                    SubscriptionStatus.ACTIVE,
+                    SubscriptionStatus.EXPIRING_SOON,
+                  ],
+                },
+                expiryDate: { $gte: now, $lte: sevenDaysFromNow },
+              },
+              {
+                subscriptionStatus: SubscriptionStatus.EXPIRED,
+                expiryDate: { $gte: thirtyDaysAgo, $lte: now },
+              },
+              {
+                subscriptionStatus: SubscriptionStatus.ACTIVE,
+                expiryDate: { $gte: thirtyDaysAgo, $lt: now },
+              },
+            ],
+          },
         },
-      },
+        {
+          $group: {
+            _id: {
+              $ifNull: [
+                '$renewalFollowUpStatus',
+                RenewalFollowUpStatus.PENDING,
+              ],
+            },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      this.activityLogsService.findRecent(companyId, 30, locScope),
+      this.memberSubscriptionModel
+        .find({
+          ...tenant,
+          subscriptionStatus: SubscriptionStatus.ACTIVE,
+        })
+        .populate('memberId', 'name email phone')
+        .populate('planId', 'name price')
+        .select(
+          'memberId planId startDate expiryDate paymentStatus pendingAmount',
+        )
+        .sort({ expiryDate: 1 })
+        .limit(10)
+        .exec(),
+      this.memberSubscriptionModel
+        .find({
+          ...tenant,
+          subscriptionStatus: SubscriptionStatus.ACTIVE,
+          expiryDate: { $gte: now, $lte: sevenDaysFromNow },
+        })
+        .populate('memberId', 'name email phone')
+        .populate('planId', 'name price')
+        .select('memberId planId expiryDate pendingAmount paymentStatus')
+        .sort({ expiryDate: 1 })
+        .exec(),
+      this.memberSubscriptionModel
+        .find({
+          ...tenant,
+          subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+          pendingAmount: { $gt: 0 },
+        })
+        .populate('memberId', 'name email phone')
+        .populate('planId', 'name price')
+        .select(
+          'memberId planId pendingAmount totalPaid planPrice paymentStatus',
+        )
+        .sort({ pendingAmount: -1 })
+        .limit(10)
+        .exec(),
+      this.paymentModel
+        .find({ ...tenant, deletedAt: null })
+        .populate('memberId', 'name email')
+        .populate('receivedBy', 'name email')
+        .select(
+          'memberId receivedBy amount paymentMode paymentDate transactionId',
+        )
+        .sort({ paymentDate: -1, createdAt: -1 })
+        .limit(10)
+        .exec(),
+      this.userModel
+        .find({
+          ...tenant,
+          userType: UserType.MEMBER,
+          createdAt: { $gte: thirtyDaysAgo },
+        })
+        .select('name email phone createdAt')
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .exec(),
     ]);
+
+    const totalRevenue = revenueResult[0]?.totalRevenue || 0;
+    const totalPaymentsCount = revenueResult[0]?.count || 0;
+    const monthlyRevenue = monthlyRevenueResult[0]?.monthlyRevenue || 0;
+    const monthlyPaymentsCount = monthlyRevenueResult[0]?.count || 0;
+    const lastMonthRevenue = lastMonthRevenueResult[0]?.revenue || 0;
+    const lastMonthPaymentsCount = lastMonthRevenueResult[0]?.count || 0;
     const totalPendingAmount = pendingAmountResult[0]?.totalPending || 0;
 
-    // ===== DETAILED LISTS =====
+    const revenueMomPct =
+      lastMonthRevenue > 0
+        ? Math.round(
+            ((monthlyRevenue - lastMonthRevenue) / lastMonthRevenue) * 1000,
+          ) / 10
+        : monthlyRevenue > 0
+          ? 100
+          : 0;
 
-    // Active members with subscription details
-    const activeMembers = await this.memberSubscriptionModel
-      .find({ subscriptionStatus: SubscriptionStatus.ACTIVE })
-      .populate('memberId', 'name email phone')
-      .populate('planId', 'name price')
-      .select('memberId planId startDate expiryDate paymentStatus pendingAmount')
-      .sort({ expiryDate: 1 })
-      .limit(10)
-      .exec();
+    const renewalsMap: Record<string, number> = {
+      PENDING: 0,
+      CONTACTED: 0,
+      PROMISED: 0,
+      RENEWED: 0,
+      LOST: 0,
+      SKIPPED: 0,
+    };
+    for (const row of renewalStatusBreakdown as any[]) {
+      const key = row._id || RenewalFollowUpStatus.PENDING;
+      renewalsMap[key] = (renewalsMap[key] || 0) + row.count;
+    }
+    const renewalsOpenCount =
+      renewalsMap.PENDING + renewalsMap.CONTACTED + renewalsMap.PROMISED;
 
-    // Members with subscriptions expiring in next 7 days
-    const membersNearExpiry = await this.memberSubscriptionModel
-      .find({
-        subscriptionStatus: SubscriptionStatus.ACTIVE,
-        expiryDate: { $gte: now, $lte: sevenDaysFromNow },
-      })
-      .populate('memberId', 'name email phone')
-      .populate('planId', 'name price')
-      .select('memberId planId expiryDate pendingAmount paymentStatus')
-      .sort({ expiryDate: 1 })
-      .exec();
-
-    // Calculate days remaining for expiring subscriptions
     const membersNearExpiryWithDays = membersNearExpiry.map((sub: any) => {
       const daysRemaining = Math.ceil(
         (new Date(sub.expiryDate).getTime() - now.getTime()) /
@@ -129,63 +340,38 @@ export class AnalyticsService {
       };
     });
 
-    // Members with pending/partial payments
-    const membersWithPendingPayments = await this.memberSubscriptionModel
-      .find({
-        subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
-        pendingAmount: { $gt: 0 },
-      })
-      .populate('memberId', 'name email phone')
-      .populate('planId', 'name price')
-      .select('memberId planId pendingAmount totalPaid planPrice paymentStatus')
-      .sort({ pendingAmount: -1 })
-      .limit(10)
-      .exec();
-
-    // Recent payments (last 10)
-    const recentPayments = await this.paymentModel
-      .find({ deletedAt: null })
-      .populate('memberId', 'name email')
-      .populate('subscriptionId', 'planId')
-      .select('memberId amount paymentMode paymentDate transactionId')
-      .sort({ paymentDate: -1, createdAt: -1 })
-      .limit(10)
-      .exec();
-
-    // New members (joined in last 30 days) — detailed list, capped at 10.
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const newMembers = await this.userModel
-      .find({
-        userType: UserType.MEMBER,
-        createdAt: { $gte: thirtyDaysAgo },
-      })
-      .select('name email phone createdAt')
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .exec();
-
-    // Accurate count of members joined this calendar month.
-    const newMembersThisMonth = await this.userModel
-      .countDocuments({
-        userType: UserType.MEMBER,
-        createdAt: { $gte: startOfMonth },
-      })
-      .exec();
-
     return {
-      // Counts
       counts: {
         totalMembers,
         activeSubscriptions: activeSubscriptionsCount,
+        expiredSubscriptions: expiredSubscriptionsCount,
         totalRevenue,
+        totalPaymentsCount,
         monthlyRevenue,
+        monthlyPaymentsCount,
+        lastMonthRevenue,
+        lastMonthPaymentsCount,
+        revenueMomPct,
         totalPendingAmount,
-        membersNearExpiry: membersNearExpiry.length,
-        membersWithPendingPayments: membersWithPendingPayments.length,
+        membersNearExpiry: membersNearExpiryCount,
+        membersExpiringIn30Days: expiringIn30Days,
+        membersWithPendingPayments: membersWithPendingCount,
         newMembersThisMonth,
+        renewalsOpen: renewalsOpenCount,
+        renewalsContacted: renewalsMap.CONTACTED,
+        renewalsPromised: renewalsMap.PROMISED,
+        renewalsRenewed: renewalsMap.RENEWED,
+        renewalsLost: renewalsMap.LOST,
       },
 
-      // Detailed Lists
+      paymentModeBreakdown: (paymentModeBreakdown as any[]).map((row) => ({
+        mode: row._id || 'UNKNOWN',
+        total: row.total,
+        count: row.count,
+      })),
+
+      renewalsBreakdown: renewalsMap,
+
       activeMembers: activeMembers.map((sub: any) => ({
         memberName: sub.memberId?.name || 'Unknown',
         email: sub.memberId?.email || '',
@@ -220,6 +406,7 @@ export class AnalyticsService {
         paymentMode: payment.paymentMode,
         paymentDate: payment.paymentDate,
         transactionId: payment.transactionId,
+        receivedByName: payment.receivedBy?.name || null,
       })),
 
       newMembers: newMembers.map((member: any) => ({
@@ -228,34 +415,46 @@ export class AnalyticsService {
         phone: member.phone,
         joinedDate: member.createdAt,
       })),
+
+      activityFeed: (activityFeed as any[]).map((a) => ({
+        id: String(a._id),
+        actorName: a.actorName,
+        actorId: a.actorId ? String(a.actorId) : null,
+        action: a.action,
+        entityType: a.entityType,
+        entityId: a.entityId ? String(a.entityId) : null,
+        summary: a.summary,
+        metadata: a.metadata || {},
+        createdAt: a.createdAt,
+      })),
     };
   }
 
   /**
    * Get member statistics
    */
-  async getMemberStatistics() {
+  async getMemberStatistics(companyId: string, locScope: { locationId?: string } = {}) {
+    const tenant = this.tenantMatch(companyId, locScope);
     const totalMembers = await this.userModel
-      .countDocuments({ userType: UserType.MEMBER })
+      .countDocuments({ ...tenant, userType: UserType.MEMBER })
       .exec();
 
-    // Members with active subscriptions
     const membersWithActiveSubscriptions = await this.memberSubscriptionModel
       .distinct('memberId', {
+        ...tenant,
         subscriptionStatus: SubscriptionStatus.ACTIVE,
       })
       .exec();
 
-    // Members with expired subscriptions
     const membersWithExpiredSubscriptions = await this.memberSubscriptionModel
       .distinct('memberId', {
+        ...tenant,
         subscriptionStatus: SubscriptionStatus.EXPIRED,
       })
       .exec();
 
-    // Members without any subscription
     const membersWithSubscriptions = await this.memberSubscriptionModel
-      .distinct('memberId')
+      .distinct('memberId', { ...tenant })
       .exec();
 
     const membersWithoutSubscription =
@@ -272,15 +471,15 @@ export class AnalyticsService {
   /**
    * Get revenue analytics
    */
-  async getRevenueAnalytics() {
+  async getRevenueAnalytics(companyId: string, locScope: { locationId?: string } = {}) {
+    const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
 
-    // Total revenue all time (exclude voided payments — P0-12)
     const totalRevenueResult = await this.paymentModel.aggregate([
-      { $match: { deletedAt: null } },
+      { $match: { ...tenant, deletedAt: null } },
       {
         $group: {
           _id: null,
@@ -290,10 +489,10 @@ export class AnalyticsService {
     ]);
     const totalRevenue = totalRevenueResult[0]?.total || 0;
 
-    // Current month revenue
     const currentMonthResult = await this.paymentModel.aggregate([
       {
         $match: {
+          ...tenant,
           deletedAt: null,
           paymentDate: { $gte: startOfMonth },
         },
@@ -309,10 +508,10 @@ export class AnalyticsService {
     const currentMonthRevenue = currentMonthResult[0]?.total || 0;
     const currentMonthPayments = currentMonthResult[0]?.count || 0;
 
-    // Last month revenue
     const lastMonthResult = await this.paymentModel.aggregate([
       {
         $match: {
+          ...tenant,
           deletedAt: null,
           paymentDate: { $gte: startOfLastMonth, $lte: endOfLastMonth },
         },
@@ -328,10 +527,10 @@ export class AnalyticsService {
     const lastMonthRevenue = lastMonthResult[0]?.total || 0;
     const lastMonthPayments = lastMonthResult[0]?.count || 0;
 
-    // Total pending amount
     const pendingAmountResult = await this.memberSubscriptionModel.aggregate([
       {
         $match: {
+          ...tenant,
           subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
           pendingAmount: { $gt: 0 },
         },
@@ -347,9 +546,8 @@ export class AnalyticsService {
     const totalPendingAmount = pendingAmountResult[0]?.total || 0;
     const subscriptionsWithPending = pendingAmountResult[0]?.count || 0;
 
-    // Payment mode breakdown
     const paymentModeBreakdown = await this.paymentModel.aggregate([
-      { $match: { deletedAt: null } },
+      { $match: { ...tenant, deletedAt: null } },
       {
         $group: {
           _id: '$paymentMode',
@@ -383,20 +581,20 @@ export class AnalyticsService {
   /**
    * Get subscription analytics
    */
-  async getSubscriptionAnalytics() {
+  async getSubscriptionAnalytics(companyId: string, locScope: { locationId?: string } = {}) {
+    const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
     const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysFromNow = new Date(
       now.getTime() + 30 * 24 * 60 * 60 * 1000,
     );
 
-    // Total subscriptions count
     const totalSubscriptions = await this.memberSubscriptionModel
-      .countDocuments()
+      .countDocuments({ ...tenant })
       .exec();
 
-    // Status breakdown
     const statusBreakdown = await this.memberSubscriptionModel.aggregate([
+      { $match: { ...tenant } },
       {
         $group: {
           _id: '$subscriptionStatus',
@@ -405,11 +603,11 @@ export class AnalyticsService {
       },
     ]);
 
-    // Payment status breakdown
     const paymentStatusBreakdown = await this.memberSubscriptionModel.aggregate(
       [
         {
           $match: {
+            ...tenant,
             subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
           },
         },
@@ -423,9 +621,9 @@ export class AnalyticsService {
       ],
     );
 
-    // Expiring soon (next 7 days)
     const expiringSoon = await this.memberSubscriptionModel
       .find({
+        ...tenant,
         subscriptionStatus: SubscriptionStatus.ACTIVE,
         expiryDate: { $gte: now, $lte: sevenDaysFromNow },
       })
@@ -435,18 +633,18 @@ export class AnalyticsService {
       .sort({ expiryDate: 1 })
       .exec();
 
-    // Expiring in next 30 days
     const expiringInMonth = await this.memberSubscriptionModel
       .countDocuments({
+        ...tenant,
         subscriptionStatus: SubscriptionStatus.ACTIVE,
         expiryDate: { $gte: now, $lte: thirtyDaysFromNow },
       })
       .exec();
 
-    // Most popular plans
     const popularPlans = await this.memberSubscriptionModel.aggregate([
       {
         $match: {
+          ...tenant,
           subscriptionStatus: SubscriptionStatus.ACTIVE,
         },
       },
@@ -498,7 +696,8 @@ export class AnalyticsService {
   /**
    * Get payment trends (last 6 months)
    */
-  async getPaymentTrends() {
+  async getPaymentTrends(companyId: string, locScope: { locationId?: string } = {}) {
+    const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
     const sixMonthsAgo = new Date(
       now.getFullYear(),
@@ -509,6 +708,7 @@ export class AnalyticsService {
     const monthlyTrends = await this.paymentModel.aggregate([
       {
         $match: {
+          ...tenant,
           deletedAt: null,
           paymentDate: { $gte: sixMonthsAgo },
         },

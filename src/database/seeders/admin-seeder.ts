@@ -4,42 +4,41 @@ import { User, UserSchema } from '../../users/schemas/user.schema';
 import { Role } from '../../common/enums/role.enum';
 import { UserType } from '../../common/enums/user-type.enum';
 
+/**
+ * Seeds platform SUPER_ADMIN (no company).
+ * Set SEED_SUPER_ADMIN_EMAIL + SEED_SUPER_ADMIN_PASSWORD.
+ */
 export async function seedAdminUser() {
   const UserModel = model<User>('User', UserSchema);
 
-  // Read seed credentials from env.
-  const adminEmail = process.env.SEED_ADMIN_EMAIL;
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD;
+  const adminEmail =
+    process.env.SEED_SUPER_ADMIN_EMAIL || process.env.SEED_ADMIN_EMAIL;
+  const adminPassword =
+    process.env.SEED_SUPER_ADMIN_PASSWORD || process.env.SEED_ADMIN_PASSWORD;
 
   if (!adminEmail || !adminPassword) {
     console.error(
-      'Cannot seed admin: set SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD in the environment.',
+      'Cannot seed: set SEED_SUPER_ADMIN_EMAIL and SEED_SUPER_ADMIN_PASSWORD',
     );
     return;
   }
 
-  // Check if admin already exists
-  const existingAdmin = await UserModel.findOne({ email: adminEmail });
-
-  if (existingAdmin) {
-    console.log('Admin user already exists');
+  const existing = await UserModel.findOne({ email: adminEmail });
+  if (existing) {
+    console.log('Platform admin already exists');
     return;
   }
 
-  // Create admin user
   const hashedPassword = await bcrypt.hash(adminPassword, 10);
-
-  const admin = new UserModel({
+  await new UserModel({
     email: adminEmail,
     password: hashedPassword,
-    name: 'Admin User',
-    role: Role.ADMIN,
+    name: 'Platform Admin',
+    role: Role.SUPER_ADMIN,
     userType: UserType.ADMIN,
-  });
+    companyId: null,
+    activeCompanyId: null,
+  }).save();
 
-  await admin.save();
-
-  // Do not log the password.
-  console.log(`Admin user created successfully for ${adminEmail}`);
-  console.log('Log in with the SEED_ADMIN_PASSWORD you configured, then change it.');
+  console.log(`SUPER_ADMIN created for ${adminEmail}`);
 }

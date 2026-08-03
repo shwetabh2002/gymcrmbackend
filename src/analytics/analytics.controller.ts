@@ -1,38 +1,59 @@
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '../common/enums/role.enum';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
+import { RequirePermissions } from '../common/decorators/permissions.decorator';
+import { Permission } from '../common/enums/permission.enum';
+import { CompanyId } from '../common/tenant/company-id.decorator';
+import { LocationScope } from '../common/tenant/location.decorator';
 
 @Controller('analytics')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.MANAGER)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class AnalyticsController {
   constructor(private readonly analyticsService: AnalyticsService) {}
 
   @Get('dashboard')
-  async getDashboardOverview() {
-    return this.analyticsService.getDashboardOverview();
+  @RequirePermissions(Permission.DASHBOARD)
+  async getDashboardOverview(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+  ) {
+    return this.analyticsService.getDashboardOverview(companyId, locScope);
   }
 
   @Get('members')
-  async getMemberStatistics() {
-    return this.analyticsService.getMemberStatistics();
+  @RequirePermissions(Permission.DASHBOARD, Permission.MEMBERS_VIEW)
+  async getMemberStatistics(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+  ) {
+    return this.analyticsService.getMemberStatistics(companyId, locScope);
   }
 
   @Get('revenue')
-  async getRevenueAnalytics() {
-    return this.analyticsService.getRevenueAnalytics();
+  @RequirePermissions(Permission.PAYMENTS_VIEW, Permission.DASHBOARD)
+  async getRevenueAnalytics(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+  ) {
+    return this.analyticsService.getRevenueAnalytics(companyId, locScope);
   }
 
   @Get('subscriptions')
-  async getSubscriptionAnalytics() {
-    return this.analyticsService.getSubscriptionAnalytics();
+  @RequirePermissions(Permission.DASHBOARD, Permission.SUBSCRIPTIONS_VIEW)
+  async getSubscriptionAnalytics(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+  ) {
+    return this.analyticsService.getSubscriptionAnalytics(companyId, locScope);
   }
 
   @Get('payment-trends')
-  async getPaymentTrends() {
-    return this.analyticsService.getPaymentTrends();
+  @RequirePermissions(Permission.PAYMENTS_VIEW, Permission.DASHBOARD)
+  async getPaymentTrends(
+    @CompanyId() companyId: string,
+    @LocationScope() locScope: { locationId?: string },
+  ) {
+    return this.analyticsService.getPaymentTrends(companyId, locScope);
   }
 }

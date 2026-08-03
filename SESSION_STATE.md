@@ -529,7 +529,7 @@ Untracked files:
 ### Environment Variables (.env)
 ```
 # Database
-MONGODB_URI=mongodb+srv://testuser:****@<cluster>.mongodb.net/backendgym
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/backendgym
 
 # JWT
 JWT_SECRET=your-secret-key

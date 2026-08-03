@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
+import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 import { DurationType } from '../../common/enums/duration-type.enum';
 import { PlanStatus } from '../../common/enums/plan-status.enum';
 
@@ -7,6 +7,14 @@ export type SubscriptionPlanDocument = SubscriptionPlan & Document;
 
 @Schema({ timestamps: true })
 export class SubscriptionPlan {
+  @Prop({
+    type: MongooseSchema.Types.ObjectId,
+    ref: 'Company',
+    required: true,
+    index: true,
+  })
+  companyId: Types.ObjectId;
+
   @Prop({ required: true })
   name: string;
 

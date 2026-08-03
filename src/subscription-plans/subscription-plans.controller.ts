@@ -14,49 +14,58 @@ import { SubscriptionPlansService } from './subscription-plans.service';
 import { CreateSubscriptionPlanDto } from './dto/create-subscription-plan.dto';
 import { UpdateSubscriptionPlanDto } from './dto/update-subscription-plan.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
-import { Role } from '../common/enums/role.enum';
+import { PermissionsGuard } from '../auth/guards/permissions.guard';
+import { RequirePermissions } from '../common/decorators/permissions.decorator';
+import { Permission } from '../common/enums/permission.enum';
+import { CompanyId } from '../common/tenant/company-id.decorator';
 
 @Controller('subscription-plans')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SUPER_ADMIN, Role.ADMIN, Role.MANAGER)
+@UseGuards(JwtAuthGuard, PermissionsGuard)
 export class SubscriptionPlansController {
   constructor(
     private readonly subscriptionPlansService: SubscriptionPlansService,
   ) {}
 
   @Post()
+  @RequirePermissions(Permission.PLANS_CREATE)
   @HttpCode(HttpStatus.CREATED)
-  async create(@Body() createDto: CreateSubscriptionPlanDto) {
-    return this.subscriptionPlansService.create(createDto);
+  async create(
+    @CompanyId() companyId: string,
+    @Body() createDto: CreateSubscriptionPlanDto,
+  ) {
+    return this.subscriptionPlansService.create(companyId, createDto);
   }
 
   @Get()
+  @RequirePermissions(Permission.PLANS_VIEW)
   @HttpCode(HttpStatus.OK)
-  async findAll() {
-    return this.subscriptionPlansService.findAll();
+  async findAll(@CompanyId() companyId: string) {
+    return this.subscriptionPlansService.findAll(companyId);
   }
 
   @Get(':id')
+  @RequirePermissions(Permission.PLANS_VIEW)
   @HttpCode(HttpStatus.OK)
-  async findById(@Param('id') id: string) {
-    return this.subscriptionPlansService.findById(id);
+  async findById(@CompanyId() companyId: string, @Param('id') id: string) {
+    return this.subscriptionPlansService.findById(companyId, id);
   }
 
   @Put(':id')
+  @RequirePermissions(Permission.PLANS_UPDATE)
   @HttpCode(HttpStatus.OK)
   async update(
+    @CompanyId() companyId: string,
     @Param('id') id: string,
     @Body() updateDto: UpdateSubscriptionPlanDto,
   ) {
-    return this.subscriptionPlansService.update(id, updateDto);
+    return this.subscriptionPlansService.update(companyId, id, updateDto);
   }
 
   @Delete(':id')
+  @RequirePermissions(Permission.PLANS_DELETE)
   @HttpCode(HttpStatus.OK)
-  async delete(@Param('id') id: string) {
-    await this.subscriptionPlansService.delete(id);
+  async delete(@CompanyId() companyId: string, @Param('id') id: string) {
+    await this.subscriptionPlansService.delete(companyId, id);
     return { message: 'Subscription plan deleted successfully' };
   }
 }

@@ -13,6 +13,18 @@ import { MemberSubscriptionsModule } from './member-subscriptions/member-subscri
 import { PaymentsModule } from './payments/payments.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { RenewalsModule } from './renewals/renewals.module';
+import { EmployeesModule } from './employees/employees.module';
+import { GymSettingsModule } from './gym-settings/gym-settings.module';
+import { ActivityLogsModule } from './activity-logs/activity-logs.module';
+import { CompaniesModule } from './companies/companies.module';
+import { LocationsModule } from './locations/locations.module';
+import { EmailModule } from './email/email.module';
+import { PaymentProviderModule } from './payment-provider/payment-provider.module';
+import { CheckoutModule } from './checkout/checkout.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
+import { AutopayModule } from './autopay/autopay.module';
+import { WhatsAppModule } from './whatsapp/whatsapp.module';
 
 @Module({
   imports: [
@@ -20,6 +32,8 @@ import { AnalyticsModule } from './analytics/analytics.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    EmailModule,
+    WhatsAppModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -73,12 +87,22 @@ import { AnalyticsModule } from './analytics/analytics.module';
     ]),
     AuthModule,
     UsersModule,
+    CompaniesModule,
+    LocationsModule,
     SubscriptionPlansModule,
     MembersModule,
     MemberSubscriptionsModule,
+    PaymentProviderModule,
     PaymentsModule,
     InvoicesModule,
     AnalyticsModule,
+    RenewalsModule,
+    EmployeesModule,
+    GymSettingsModule,
+    ActivityLogsModule,
+    CheckoutModule,
+    WebhooksModule,
+    AutopayModule,
   ],
   controllers: [AppController],
   providers: [

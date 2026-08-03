@@ -13,6 +13,7 @@ import {
   SubscriptionPlan,
   SubscriptionPlanSchema,
 } from '../subscription-plans/schemas/subscription-plan.schema';
+import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import {
       { name: Payment.name, schema: PaymentSchema },
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
     ]),
+    ActivityLogsModule,
   ],
   providers: [AnalyticsService],
   controllers: [AnalyticsController],

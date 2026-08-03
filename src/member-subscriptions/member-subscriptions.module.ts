@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MemberSubscriptionsService } from './member-subscriptions.service';
 import { MemberSubscriptionsController } from './member-subscriptions.controller';
@@ -11,6 +11,8 @@ import {
   SubscriptionPlan,
   SubscriptionPlanSchema,
 } from '../subscription-plans/schemas/subscription-plan.schema';
+import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
+import { PaymentsModule } from '../payments/payments.module';
 
 @Module({
   imports: [
@@ -19,6 +21,8 @@ import {
       { name: User.name, schema: UserSchema },
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
     ]),
+    ActivityLogsModule,
+    forwardRef(() => PaymentsModule),
   ],
   providers: [MemberSubscriptionsService],
   controllers: [MemberSubscriptionsController],
