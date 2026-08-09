@@ -9,6 +9,7 @@ import { UpdateGymSettingsDto } from './dto/update-gym-settings.dto';
 import { StorageService, AssetFolder } from '../storage/storage.service';
 import { Company, CompanyDocument } from '../companies/schemas/company.schema';
 import {
+  DEFAULT_SAC_CODE,
   DEFAULT_INVOICE_DISPLAY,
   isInvoiceLayout,
   isInvoiceStampAlign,
@@ -81,6 +82,11 @@ export class GymSettingsService {
       invoiceTaxMode: isInvoiceTaxMode(doc.invoiceTaxMode)
         ? doc.invoiceTaxMode
         : DEFAULT_INVOICE_TAX_MODE,
+      invoiceSacCode: doc.invoiceSacCode ?? DEFAULT_SAC_CODE,
+      invoicePlaceOfSupply: doc.invoicePlaceOfSupply ?? null,
+      invoiceTaxBreakup: doc.invoiceTaxBreakup || 'split',
+      invoiceShowAmountInWords: doc.invoiceShowAmountInWords !== false,
+      invoiceTerms: doc.invoiceTerms ?? null,
       autopayEnabled: doc.autopayEnabled === true,
       autopayMethod: doc.autopayMethod || 'upi',
       autopayMandateMultiplier:
@@ -201,6 +207,21 @@ export class GymSettingsService {
       isInvoiceTaxMode(dto.invoiceTaxMode)
     ) {
       update.invoiceTaxMode = dto.invoiceTaxMode;
+    }
+    if (dto.invoiceSacCode !== undefined) {
+      update.invoiceSacCode = dto.invoiceSacCode?.trim() || null;
+    }
+    if (dto.invoicePlaceOfSupply !== undefined) {
+      update.invoicePlaceOfSupply = dto.invoicePlaceOfSupply?.trim() || null;
+    }
+    if (dto.invoiceTaxBreakup !== undefined) {
+      update.invoiceTaxBreakup = dto.invoiceTaxBreakup;
+    }
+    if (dto.invoiceShowAmountInWords !== undefined) {
+      update.invoiceShowAmountInWords = dto.invoiceShowAmountInWords;
+    }
+    if (dto.invoiceTerms !== undefined) {
+      update.invoiceTerms = dto.invoiceTerms?.trim() || null;
     }
     if (dto.autopayEnabled !== undefined) {
       update.autopayEnabled = dto.autopayEnabled;

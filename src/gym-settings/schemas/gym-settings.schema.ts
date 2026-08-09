@@ -86,6 +86,33 @@ export class GymSettings {
   invoiceTaxMode: string;
 
   /**
+   * SAC/HSN code printed on the invoice. Gym & fitness services default to
+   * 999723; a gym billing something else can change it.
+   */
+  @Prop({ type: String, default: null })
+  invoiceSacCode: string | null;
+
+  /** State whose GST applies — required on an Indian tax invoice. */
+  @Prop({ type: String, default: null })
+  invoicePlaceOfSupply: string | null;
+
+  /**
+   * How the tax line is presented:
+   *   split  → CGST + SGST halves (supplier and member in the same state)
+   *   single → one combined line (IGST, or any non-GST market)
+   */
+  @Prop({ type: String, default: 'split' })
+  invoiceTaxBreakup: string;
+
+  /** Indian invoices conventionally spell the total out. */
+  @Prop({ type: Boolean, default: true })
+  invoiceShowAmountInWords: boolean;
+
+  /** Terms / declaration printed under the totals. */
+  @Prop({ type: String, default: null })
+  invoiceTerms: string | null;
+
+  /**
    * Per-gym feature flag: UPI Autopay / recurring mandate.
    * When false, gym still uses cash/UPI/online one-time — no mandates or autopay charges.
    */

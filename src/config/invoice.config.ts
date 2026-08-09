@@ -34,8 +34,7 @@ export const DEFAULT_INVOICE_DISPLAY: InvoiceDisplayOptions = {
 
 export function isInvoiceLayout(v: unknown): v is InvoiceLayout {
   return (
-    typeof v === 'string' &&
-    (INVOICE_LAYOUTS as readonly string[]).includes(v)
+    typeof v === 'string' && (INVOICE_LAYOUTS as readonly string[]).includes(v)
   );
 }
 
@@ -45,3 +44,13 @@ export function isInvoiceStampAlign(v: unknown): v is InvoiceStampAlign {
     (INVOICE_STAMP_ALIGNS as readonly string[]).includes(v)
   );
 }
+
+/**
+ * Service Accounting Code for gym / fitness services. Printed on the invoice
+ * unless a gym overrides it in Settings.
+ */
+export const DEFAULT_SAC_CODE = '999723';
+
+/** How the tax line is presented on the invoice. */
+export const INVOICE_TAX_BREAKUPS = ['split', 'single'] as const;
+export type InvoiceTaxBreakup = (typeof INVOICE_TAX_BREAKUPS)[number];

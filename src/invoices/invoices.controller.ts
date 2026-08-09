@@ -103,8 +103,12 @@ export class InvoicesController {
     @LocationScope() locScope: { locationId?: string },
     @Param('id') id: string,
     @Body() updateDto: UpdateInvoiceDto,
+    @Request() req: any,
   ) {
-    return this.invoicesService.update(companyId, id, updateDto, locScope);
+    return this.invoicesService.update(companyId, id, updateDto, locScope, {
+      userId: req.user.userId,
+      name: req.user.name,
+    });
   }
 
   @Delete(':id')

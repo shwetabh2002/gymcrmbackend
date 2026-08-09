@@ -118,6 +118,30 @@ export class UpdateGymSettingsDto {
   @IsIn([...INVOICE_TAX_MODES])
   invoiceTaxMode?: string;
 
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  invoiceSacCode?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  invoicePlaceOfSupply?: string;
+
+  /** split = CGST + SGST halves, single = one combined tax line. */
+  @IsOptional()
+  @IsIn(['split', 'single'])
+  invoiceTaxBreakup?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  invoiceShowAmountInWords?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  invoiceTerms?: string;
+
   /** Per-gym: enable UPI Autopay / recurring. Off = normal platform without autopay. */
   @IsOptional()
   @IsBoolean()

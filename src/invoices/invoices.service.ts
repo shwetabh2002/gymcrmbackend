@@ -34,6 +34,14 @@ import { CompanyContextService } from '../common/company-context/company-context
 
 type LocScope = { locationId?: string };
 
+/** Works whether the ref is an ObjectId or an already-populated document. */
+function toObjectIdString(ref: unknown): string | null {
+  if (!ref) return null;
+  if (typeof ref === 'string') return ref;
+  const id = (ref as { _id?: unknown })._id ?? ref;
+  return id ? String(id) : null;
+}
+
 const LOCATION_POPULATE = {
   path: 'locationId',
   select:
@@ -56,12 +64,19 @@ export class InvoicesService {
   ) {}
 
   private applyInvoicePopulates(query: any) {
-    return query
-      .populate(LOCATION_POPULATE)
-      .populate('subscriptionId')
-      .populate('memberId', '-password -refreshToken')
-      .populate('paymentId')
-      .populate('generatedBy', '-password -refreshToken');
+    return (
+      query
+        .populate(LOCATION_POPULATE)
+        // Nested plan: the invoice shows what was bought and for how long, not
+        // just a plan id.
+        .populate({
+          path: 'subscriptionId',
+          populate: { path: 'planId', select: 'name duration durationType' },
+        })
+        .populate('memberId', '-password -refreshToken')
+        .populate('paymentId')
+        .populate('generatedBy', '-password -refreshToken')
+    );
   }
 
   private async resolveCompanyTax(companyId: string) {
@@ -314,6 +329,7 @@ export class InvoicesService {
     id: string,
     updateDto: UpdateInvoiceDto,
     locScope: LocScope = {},
+    actor?: ActivityActor,
   ): Promise<InvoiceDocument> {
     const invoice = await this.invoiceModel
       .findOne({ _id: id, companyId, deletedAt: null, ...locScope })
@@ -323,25 +339,70 @@ export class InvoicesService {
       throw new NotFoundException(`Invoice with ID ${id} not found`);
     }
 
-    const { companyId: _ignore, locationId: _loc, ...rest } = updateDto as any;
-    let updateData: any = { ...rest };
-    if (updateDto.items || updateDto.taxPercentage !== undefined) {
-      const items = updateDto.items || invoice.items;
+    /**
+     * An invoice raised from a payment must keep saying what was actually
+     * collected. Wording and dates can be corrected; money cannot — void the
+     * payment and record the correct one, which reverses this invoice too.
+     */
+    const boundToPayment = !!invoice.paymentId;
+
+    const updateData: Record<string, unknown> = {};
+    if (updateDto.notes !== undefined) updateData.notes = updateDto.notes;
+    if (updateDto.invoiceDate !== undefined) {
+      updateData.invoiceDate = new Date(updateDto.invoiceDate);
+    }
+    if (updateDto.dueDate !== undefined) {
+      updateData.dueDate = new Date(updateDto.dueDate);
+    }
+
+    if (boundToPayment) {
+      const amountChanged = updateDto.items?.some(
+        (item, index) =>
+          item.amount !== undefined &&
+          Math.abs(item.amount - (invoice.items[index]?.amount ?? 0)) > 0.001,
+      );
+      if (amountChanged || updateDto.taxPercentage !== undefined) {
+        throw new BadRequestException(
+          'This invoice follows its payment, so amounts and tax cannot be edited here. ' +
+            'Void the payment and record the correct one — the invoice is reissued with it.',
+        );
+      }
+      if (updateDto.items) {
+        // Descriptions only; each amount is carried over untouched.
+        updateData.items = updateDto.items.map((item, index) => ({
+          description: item.description,
+          amount: invoice.items[index]?.amount ?? 0,
+        }));
+      }
+    } else if (updateDto.items || updateDto.taxPercentage !== undefined) {
+      const items = (updateDto.items || invoice.items).map((item: any) => ({
+        description: item.description,
+        amount: Number(item.amount) || 0,
+      }));
       const taxPercentage =
         updateDto.taxPercentage !== undefined
           ? updateDto.taxPercentage
           : invoice.taxPercentage;
 
-      const subtotal = items.reduce((sum, item) => sum + item.amount, 0);
-      const taxAmount = (subtotal * taxPercentage) / 100;
-      const totalAmount = subtotal + taxAmount;
+      // Same helper as creation, so an "included GST" invoice is not silently
+      // converted to "excluded" by an edit.
+      const gross = items.reduce((sum, item) => sum + item.amount, 0);
+      const breakdown = computeTaxBreakdown(
+        invoice.taxMode === 'included' ? gross : gross,
+        taxPercentage,
+        (invoice.taxMode as any) || DEFAULT_INVOICE_TAX_MODE,
+      );
 
-      updateData = {
-        ...updateData,
-        subtotal,
-        taxAmount,
-        totalAmount,
-      };
+      updateData.items = items;
+      updateData.subtotal = breakdown.subtotal;
+      updateData.taxPercentage = breakdown.taxPercentage;
+      updateData.taxAmount = breakdown.taxAmount;
+      updateData.taxMode = breakdown.taxMode;
+      updateData.totalAmount = breakdown.totalAmount;
+    }
+
+    if (!Object.keys(updateData).length) {
+      return this.findById(companyId, id, locScope);
     }
 
     const updatedInvoice = await this.applyInvoicePopulates(
@@ -352,6 +413,24 @@ export class InvoicesService {
 
     if (!updatedInvoice) {
       throw new NotFoundException(`Invoice with ID ${id} not found`);
+    }
+
+    if (actor) {
+      // Corrections on a financial document always leave a trail.
+      await this.activityLogsService
+        .log({
+          companyId,
+          // locationId is populated on this query, so read the id off the
+          // populated document rather than stringifying the object.
+          locationId: toObjectIdString(updatedInvoice.locationId),
+          actor,
+          action: 'INVOICE_UPDATE',
+          entityType: 'invoice',
+          entityId: id,
+          summary: `${actor.name} corrected invoice ${invoice.invoiceNumber}`,
+          metadata: { changed: Object.keys(updateData) },
+        })
+        .catch(() => undefined);
     }
 
     return updatedInvoice as InvoiceDocument;
