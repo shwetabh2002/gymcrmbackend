@@ -19,6 +19,16 @@ import {
   WhatsAppMessageStatus,
 } from './schemas/whatsapp-message.schema';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
+import { RuntimeService } from '../common/runtime/runtime.service';
+import { CompanyContextService } from '../common/company-context/company-context.service';
+import {
+  FALLBACK_GYM_NAME,
+  MIN_PHONE_DIGITS,
+  WHATSAPP_TEMPLATES,
+  renderTemplate,
+  whatsappSendMessageUrl,
+  whatsappShareUrl,
+} from '../config/whatsapp.config';
 
 export type WhatsAppSendResult = {
   sent: boolean;
@@ -40,53 +50,55 @@ export class WhatsAppService implements OnModuleInit {
     private messageModel: Model<WhatsAppMessageDocument>,
     private config: ConfigService,
     private crypto: TokenEncryptionService,
+    private runtime: RuntimeService,
+    private companyContext: CompanyContextService,
   ) {}
 
   onModuleInit() {
-    const mock =
-      this.config.get('WHATSAPP_ALLOW_MOCK') !== 'false' &&
-      (this.config.get('WHATSAPP_ALLOW_MOCK') === 'true' ||
-        this.config.get('RAZORPAY_ALLOW_MOCK') === 'true' ||
-        this.config.get('NODE_ENV') !== 'production');
     this.logger.log(
-      mock
+      this.mockAllowed()
         ? 'WhatsApp auto-send: MOCK enabled (messages recorded as sent to member phone)'
         : 'WhatsApp auto-send: Cloud API only (configure per gym or env)',
     );
   }
 
-  normalizePhone(phone: string): string {
-    const digits = (phone || '').replace(/\D/g, '');
-    if (digits.length === 10) return `91${digits}`;
-    if (digits.startsWith('91') && digits.length === 12) return digits;
-    if (digits.startsWith('0') && digits.length === 11) return `91${digits.slice(1)}`;
-    return digits;
+  /** Digits-only international number, based on the gym's country dial code. */
+  async normalizePhone(companyId: string, phone: string): Promise<string> {
+    return this.companyContext.normalizePhone(companyId, phone);
   }
 
-  formatDisplayPhone(phone: string): string {
-    const n = this.normalizePhone(phone);
-    if (n.length === 12 && n.startsWith('91')) return `+91 ${n.slice(2)}`;
-    return n ? `+${n}` : phone;
+  async formatDisplayPhone(companyId: string, phone: string): Promise<string> {
+    return this.companyContext.formatPhone(companyId, phone);
   }
 
-  buildShareUrl(phone: string, message: string): string {
-    const to = this.normalizePhone(phone);
-    return `https://wa.me/${to}?text=${encodeURIComponent(message)}`;
+  async buildShareUrl(
+    companyId: string,
+    phone: string,
+    message: string,
+  ): Promise<string> {
+    return whatsappShareUrl(
+      await this.normalizePhone(companyId, phone),
+      message,
+    );
   }
 
-  membershipPaymentMessage(opts: {
+  /** Amount is formatted in the gym's own currency. */
+  async membershipPaymentMessage(opts: {
+    companyId: string;
     gymName?: string;
     memberName: string;
     amount: number;
     payUrl: string;
-  }): string {
-    const gym = opts.gymName || 'your gym';
-    return (
-      `Hi ${opts.memberName},\n\n` +
-      `Please complete your membership payment of ₹${opts.amount} for ${gym}.\n\n` +
-      `Pay / approve UPI Autopay here:\n${opts.payUrl}\n\n` +
-      `Thank you!`
-    );
+  }): Promise<string> {
+    return renderTemplate(WHATSAPP_TEMPLATES.membershipPayment, {
+      memberName: opts.memberName,
+      amount: await this.companyContext.formatMoney(
+        opts.companyId,
+        opts.amount,
+      ),
+      gymName: opts.gymName || FALLBACK_GYM_NAME,
+      payUrl: opts.payUrl,
+    });
   }
 
   async getStatus(companyId: string) {
@@ -102,18 +114,60 @@ export class WhatsAppService implements OnModuleInit {
           : WhatsAppAccountStatus.NOT_CONNECTED),
       authMode: acc?.authMode || (envCloud ? WhatsAppAuthMode.CLOUD_API : null),
       displayName: acc?.displayName || (envCloud ? 'Env Cloud API' : null),
-      phoneNumberId: acc?.phoneNumberId || this.config.get('WHATSAPP_PHONE_NUMBER_ID') || null,
+      phoneNumberId:
+        acc?.phoneNumberId ||
+        this.config.get('WHATSAPP_PHONE_NUMBER_ID') ||
+        null,
       paymentTemplate:
         acc?.paymentTemplate ||
         this.config.get('WHATSAPP_PAYMENT_TEMPLATE') ||
         null,
       connectedAt: acc?.connectedAt || null,
+      /** The gym's own number, as shown to members. */
+      senderNumber: acc?.senderNumber || null,
       mockAvailable,
+      /**
+       * True only when a message actually leaves on its own. Click-to-chat is a
+       * connected state but still needs a human to press Send.
+       */
       autoSendReady:
-        acc?.status === WhatsAppAccountStatus.CONNECTED ||
+        acc?.authMode === WhatsAppAuthMode.CLOUD_API ||
+        acc?.authMode === WhatsAppAuthMode.MOCK ||
         envCloud ||
-        mockAvailable,
+        (mockAvailable && !acc),
+      manualSendOnly: acc?.authMode === WhatsAppAuthMode.CLICK_TO_CHAT,
     };
+  }
+
+  /**
+   * Gym's own number without Meta Cloud API: nothing is auto-sent, staff taps
+   * Send on their device. Zero setup, one manual step per message.
+   */
+  async connectClickToChat(companyId: string, senderNumber: string) {
+    const digits = (senderNumber || '').replace(/\D/g, '');
+    if (digits.length < MIN_PHONE_DIGITS) {
+      throw new BadRequestException(
+        'Enter the gym WhatsApp number with country code',
+      );
+    }
+    await this.accountModel
+      .findOneAndUpdate(
+        { companyId },
+        {
+          companyId: new Types.ObjectId(companyId),
+          status: WhatsAppAccountStatus.CONNECTED,
+          authMode: WhatsAppAuthMode.CLICK_TO_CHAT,
+          senderNumber: await this.formatDisplayPhone(companyId, senderNumber),
+          displayName: 'Gym WhatsApp (manual send)',
+          cloudTokenEnc: null,
+          phoneNumberId: null,
+          paymentTemplate: null,
+          connectedAt: new Date(),
+        },
+        { upsert: true, new: true },
+      )
+      .exec();
+    return this.getStatus(companyId);
   }
 
   async connectMock(companyId: string) {
@@ -147,10 +201,13 @@ export class WhatsAppService implements OnModuleInit {
       paymentTemplate: string;
       templateLanguage?: string;
       displayName?: string;
+      senderNumber?: string;
     },
   ) {
     if (!input.cloudToken?.trim() || !input.phoneNumberId?.trim()) {
-      throw new BadRequestException('cloudToken and phoneNumberId are required');
+      throw new BadRequestException(
+        'cloudToken and phoneNumberId are required',
+      );
     }
     if (!input.paymentTemplate?.trim()) {
       throw new BadRequestException('paymentTemplate is required');
@@ -167,6 +224,9 @@ export class WhatsAppService implements OnModuleInit {
           paymentTemplate: input.paymentTemplate.trim(),
           templateLanguage: input.templateLanguage?.trim() || 'en',
           displayName: input.displayName?.trim() || 'WhatsApp Business',
+          senderNumber: input.senderNumber?.trim()
+            ? await this.formatDisplayPhone(companyId, input.senderNumber)
+            : null,
           connectedAt: new Date(),
         },
         { upsert: true, new: true },
@@ -206,18 +266,60 @@ export class WhatsAppService implements OnModuleInit {
     payUrl: string;
     gymName?: string;
     checkoutSessionId?: string;
+    /** false = front desk unticked "Send on WhatsApp"; still record the link. */
+    send?: boolean;
   }): Promise<WhatsAppSendResult> {
-    const toPhone = this.normalizePhone(opts.phone);
-    const message = this.membershipPaymentMessage(opts);
-    const shareUrl = this.buildShareUrl(opts.phone, message);
+    const toPhone = await this.normalizePhone(opts.companyId, opts.phone);
+    const message = await this.membershipPaymentMessage(opts);
+    const shareUrl = await this.buildShareUrl(
+      opts.companyId,
+      opts.phone,
+      message,
+    );
 
-    if (!toPhone || toPhone.length < 10) {
+    if (!toPhone || toPhone.length < MIN_PHONE_DIGITS) {
       return {
         sent: false,
         shareUrl,
         mode: 'wa_me',
         toPhone: opts.phone,
         error: 'Invalid member phone',
+      };
+    }
+
+    const account = await this.accountModel
+      .findOne({ companyId: opts.companyId })
+      .select('authMode status')
+      .lean()
+      .exec();
+    if (
+      account?.status === WhatsAppAccountStatus.CONNECTED &&
+      account.authMode === WhatsAppAuthMode.CLICK_TO_CHAT
+    ) {
+      // Gym chose manual sending — hand the staff a prefilled chat link.
+      await this.persistMessage({
+        companyId: opts.companyId,
+        toPhone,
+        body: message,
+        payUrl: opts.payUrl,
+        checkoutSessionId: opts.checkoutSessionId,
+        status: WhatsAppMessageStatus.QUEUED,
+        providerMode: 'wa_me',
+        providerMessageId: null,
+        failureReason: null,
+      });
+      return { sent: false, shareUrl, mode: 'wa_me', toPhone, error: null };
+    }
+
+    if (opts.send === false) {
+      // Link still returned so staff can share it from the CRM if they change
+      // their mind — we simply do not push it out.
+      return {
+        sent: false,
+        shareUrl,
+        mode: 'wa_me',
+        toPhone,
+        error: null,
       };
     }
 
@@ -257,7 +359,9 @@ export class WhatsAppService implements OnModuleInit {
           messageId: cloud.messageId,
         };
       }
-      this.logger.warn(`Cloud API failed, trying mock/fallback: ${cloud.error}`);
+      this.logger.warn(
+        `Cloud API failed, trying mock/fallback: ${cloud.error}`,
+      );
     }
 
     if (creds.mode === 'mock' || this.mockAllowed()) {
@@ -273,7 +377,7 @@ export class WhatsAppService implements OnModuleInit {
         failureReason: null,
       });
       this.logger.log(
-        `WhatsApp AUTO-SENT (mock) → ${this.formatDisplayPhone(toPhone)} | ${opts.payUrl}`,
+        `WhatsApp AUTO-SENT (mock) → ${toPhone} | ${opts.payUrl}`,
       );
       return {
         sent: true,
@@ -311,10 +415,19 @@ export class WhatsAppService implements OnModuleInit {
     memberName: string;
     amount: number;
   }): Promise<void> {
-    const toPhone = this.normalizePhone(opts.phone);
-    const body = `Hi ${opts.memberName}, your autopay of ₹${opts.amount} failed. Please visit the gym or retry payment. Thank you.`;
-    const shareUrl = this.buildShareUrl(opts.phone, body);
-    if (this.mockAllowed() || (await this.resolveCredentials(opts.companyId)).mode !== 'none') {
+    const toPhone = await this.normalizePhone(opts.companyId, opts.phone);
+    const body = renderTemplate(WHATSAPP_TEMPLATES.autopayFailed, {
+      memberName: opts.memberName,
+      amount: await this.companyContext.formatMoney(
+        opts.companyId,
+        opts.amount,
+      ),
+    });
+    const shareUrl = await this.buildShareUrl(opts.companyId, opts.phone, body);
+    if (
+      this.mockAllowed() ||
+      (await this.resolveCredentials(opts.companyId)).mode !== 'none'
+    ) {
       await this.persistMessage({
         companyId: opts.companyId,
         toPhone,
@@ -325,7 +438,12 @@ export class WhatsAppService implements OnModuleInit {
         providerMessageId: `fail_notice_${Date.now()}`,
         failureReason: null,
       });
-      this.logger.log(`Autopay failure notice AUTO-SENT → ${this.formatDisplayPhone(toPhone)}`);
+      this.logger.log(
+        `Autopay failure notice AUTO-SENT → ${await this.formatDisplayPhone(
+          opts.companyId,
+          toPhone,
+        )}`,
+      );
       return;
     }
     this.logger.log(`Autopay failure notice (manual share): ${shareUrl}`);
@@ -341,10 +459,7 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   private mockAllowed(): boolean {
-    if (this.config.get('WHATSAPP_ALLOW_MOCK') === 'false') return false;
-    if (this.config.get('WHATSAPP_ALLOW_MOCK') === 'true') return true;
-    if (this.config.get('RAZORPAY_ALLOW_MOCK') === 'true') return true;
-    return this.config.get('NODE_ENV') !== 'production';
+    return this.runtime.whatsappMockAllowed();
   }
 
   private hasEnvCloud(): boolean {
@@ -431,17 +546,14 @@ export class WhatsAppService implements OnModuleInit {
         },
       };
 
-      const res = await fetch(
-        `https://graph.facebook.com/v19.0/${input.phoneNumberId}/messages`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${input.token}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
+      const res = await fetch(whatsappSendMessageUrl(input.phoneNumberId), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${input.token}`,
+          'Content-Type': 'application/json',
         },
-      );
+        body: JSON.stringify(payload),
+      });
       const text = await res.text();
       if (!res.ok) {
         // Retry with 3 body params (older template shape) + URL button
@@ -470,20 +582,21 @@ export class WhatsAppService implements OnModuleInit {
             ],
           },
         };
-        const res2 = await fetch(
-          `https://graph.facebook.com/v19.0/${input.phoneNumberId}/messages`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${input.token}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(retryPayload),
+        const res2 = await fetch(whatsappSendMessageUrl(input.phoneNumberId), {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${input.token}`,
+            'Content-Type': 'application/json',
           },
-        );
+          body: JSON.stringify(retryPayload),
+        });
         const text2 = await res2.text();
         if (!res2.ok) {
-          return { ok: false, messageId: null, error: `${res.status} ${text} | retry ${res2.status} ${text2}` };
+          return {
+            ok: false,
+            messageId: null,
+            error: `${res.status} ${text} | retry ${res2.status} ${text2}`,
+          };
         }
         const data2 = JSON.parse(text2);
         return {

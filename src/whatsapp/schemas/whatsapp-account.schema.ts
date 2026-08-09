@@ -4,7 +4,11 @@ import { Document, Schema as MongooseSchema, Types } from 'mongoose';
 export type WhatsAppAccountDocument = WhatsAppAccount & Document;
 
 export enum WhatsAppAuthMode {
+  /** Gym's own WhatsApp Business number via Meta Cloud API — real auto-send. */
   CLOUD_API = 'CLOUD_API',
+  /** Gym's own number, but staff taps Send on their device (no Meta setup). */
+  CLICK_TO_CHAT = 'CLICK_TO_CHAT',
+  /** Development only: recorded as sent without touching WhatsApp. */
   MOCK = 'MOCK',
 }
 
@@ -55,6 +59,13 @@ export class WhatsAppAccount {
 
   @Prop({ type: String, default: null })
   displayName: string | null;
+
+  /**
+   * The gym's own WhatsApp number, as typed by the gym. Shown in Settings and
+   * used as the click-to-chat sender identity.
+   */
+  @Prop({ type: String, default: null })
+  senderNumber: string | null;
 
   @Prop({ type: Date, default: null })
   connectedAt: Date | null;

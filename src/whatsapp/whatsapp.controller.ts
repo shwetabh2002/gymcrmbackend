@@ -33,6 +33,17 @@ class ConnectCloudDto {
   @IsOptional()
   @IsString()
   displayName?: string;
+
+  /** The gym's own WhatsApp number, shown to members. */
+  @IsOptional()
+  @IsString()
+  senderNumber?: string;
+}
+
+class ConnectClickToChatDto {
+  /** Gym's WhatsApp number with country code. */
+  @IsString()
+  senderNumber: string;
 }
 
 @Controller('whatsapp')
@@ -54,6 +65,17 @@ export class WhatsAppController {
     return this.whatsapp.connectMock(companyId);
   }
 
+  /** Gym's own number, staff taps Send — no Meta Cloud API needed. */
+  @Post('click-to-chat')
+  @RequirePermissions(Permission.SETTINGS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  connectClickToChat(
+    @CompanyId() companyId: string,
+    @Body() body: ConnectClickToChatDto,
+  ) {
+    return this.whatsapp.connectClickToChat(companyId, body.senderNumber);
+  }
+
   @Post('cloud')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
@@ -71,10 +93,7 @@ export class WhatsAppController {
   @Get('messages')
   @RequirePermissions(Permission.SETTINGS_VIEW, Permission.PAYMENTS_VIEW)
   @HttpCode(HttpStatus.OK)
-  messages(
-    @CompanyId() companyId: string,
-    @Query('limit') limit?: string,
-  ) {
+  messages(@CompanyId() companyId: string, @Query('limit') limit?: string) {
     return this.whatsapp.listRecentMessages(
       companyId,
       Math.min(Number(limit) || 20, 100),
