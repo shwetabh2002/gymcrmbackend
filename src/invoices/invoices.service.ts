@@ -30,6 +30,7 @@ import {
   DEFAULT_INVOICE_TAX_PERCENTAGE,
   isInvoiceTaxMode,
 } from './tax.util';
+import { CompanyContextService } from '../common/company-context/company-context.service';
 
 type LocScope = { locationId?: string };
 
@@ -51,6 +52,7 @@ export class InvoicesService {
     private gymSettingsModel: Model<GymSettingsDocument>,
     private countersService: CountersService,
     private activityLogsService: ActivityLogsService,
+    private companyContext: CompanyContextService,
   ) {}
 
   private applyInvoicePopulates(query: any) {
@@ -122,9 +124,7 @@ export class InvoicesService {
     }
 
     const locationId =
-      (subscription.locationId
-        ? String(subscription.locationId)
-        : null) ||
+      (subscription.locationId ? String(subscription.locationId) : null) ||
       paymentLocationId ||
       writeLocationId;
     if (!locationId) {
@@ -205,7 +205,10 @@ export class InvoicesService {
         action: 'INVOICE_CREATE',
         entityType: 'invoice',
         entityId: String(saved._id),
-        summary: `${actor?.name || 'Someone'} created invoice ${invoiceNumber} for ${member.name} (₹${breakdown.totalAmount})`,
+        summary: `${actor?.name || 'Someone'} created invoice ${invoiceNumber} for ${member.name} (${await this.companyContext.formatMoney(
+          companyId,
+          breakdown.totalAmount,
+        )})`,
         metadata: {
           invoiceNumber,
           totalAmount: breakdown.totalAmount,
@@ -342,11 +345,9 @@ export class InvoicesService {
     }
 
     const updatedInvoice = await this.applyInvoicePopulates(
-      this.invoiceModel.findOneAndUpdate(
-        { _id: id, companyId },
-        updateData,
-        { returnDocument: 'after' },
-      ),
+      this.invoiceModel.findOneAndUpdate({ _id: id, companyId }, updateData, {
+        returnDocument: 'after',
+      }),
     ).exec();
 
     if (!updatedInvoice) {

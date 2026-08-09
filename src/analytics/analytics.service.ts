@@ -11,6 +11,11 @@ import { UserType } from '../common/enums/user-type.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { RenewalFollowUpStatus } from '../common/enums/renewal-follow-up-status.enum';
 import { ActivityLogsService } from '../activity-logs/activity-logs.service';
+import { DAY_MS, addDays } from '../config/time.constants';
+import {
+  EXPIRY_SOON_DAYS,
+  EXPIRY_WINDOW_DAYS,
+} from '../config/renewals.config';
 
 @Injectable()
 export class AnalyticsService {
@@ -43,7 +48,10 @@ export class AnalyticsService {
   /**
    * Get dashboard overview with key metrics and detailed lists
    */
-  async getDashboardOverview(companyId: string, locScope: { locationId?: string } = {}) {
+  async getDashboardOverview(
+    companyId: string,
+    locScope: { locationId?: string } = {},
+  ) {
     const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -56,11 +64,9 @@ export class AnalyticsService {
       59,
       59,
     );
-    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const thirtyDaysFromNow = new Date(
-      now.getTime() + 30 * 24 * 60 * 60 * 1000,
-    );
+    const sevenDaysFromNow = addDays(now, EXPIRY_SOON_DAYS);
+    const thirtyDaysAgo = addDays(now, -EXPIRY_WINDOW_DAYS);
+    const thirtyDaysFromNow = addDays(now, EXPIRY_WINDOW_DAYS);
 
     const [
       totalMembers,
@@ -325,8 +331,7 @@ export class AnalyticsService {
 
     const membersNearExpiryWithDays = membersNearExpiry.map((sub: any) => {
       const daysRemaining = Math.ceil(
-        (new Date(sub.expiryDate).getTime() - now.getTime()) /
-          (1000 * 60 * 60 * 24),
+        (new Date(sub.expiryDate).getTime() - now.getTime()) / DAY_MS,
       );
       return {
         memberName: sub.memberId?.name || 'Unknown',
@@ -433,7 +438,10 @@ export class AnalyticsService {
   /**
    * Get member statistics
    */
-  async getMemberStatistics(companyId: string, locScope: { locationId?: string } = {}) {
+  async getMemberStatistics(
+    companyId: string,
+    locScope: { locationId?: string } = {},
+  ) {
     const tenant = this.tenantMatch(companyId, locScope);
     const totalMembers = await this.userModel
       .countDocuments({ ...tenant, userType: UserType.MEMBER })
@@ -471,7 +479,10 @@ export class AnalyticsService {
   /**
    * Get revenue analytics
    */
-  async getRevenueAnalytics(companyId: string, locScope: { locationId?: string } = {}) {
+  async getRevenueAnalytics(
+    companyId: string,
+    locScope: { locationId?: string } = {},
+  ) {
     const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -581,13 +592,14 @@ export class AnalyticsService {
   /**
    * Get subscription analytics
    */
-  async getSubscriptionAnalytics(companyId: string, locScope: { locationId?: string } = {}) {
+  async getSubscriptionAnalytics(
+    companyId: string,
+    locScope: { locationId?: string } = {},
+  ) {
     const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
-    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
-    const thirtyDaysFromNow = new Date(
-      now.getTime() + 30 * 24 * 60 * 60 * 1000,
-    );
+    const sevenDaysFromNow = addDays(now, EXPIRY_SOON_DAYS);
+    const thirtyDaysFromNow = addDays(now, EXPIRY_WINDOW_DAYS);
 
     const totalSubscriptions = await this.memberSubscriptionModel
       .countDocuments({ ...tenant })
@@ -696,14 +708,13 @@ export class AnalyticsService {
   /**
    * Get payment trends (last 6 months)
    */
-  async getPaymentTrends(companyId: string, locScope: { locationId?: string } = {}) {
+  async getPaymentTrends(
+    companyId: string,
+    locScope: { locationId?: string } = {},
+  ) {
     const tenant = this.tenantMatch(companyId, locScope);
     const now = new Date();
-    const sixMonthsAgo = new Date(
-      now.getFullYear(),
-      now.getMonth() - 5,
-      1,
-    );
+    const sixMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 5, 1);
 
     const monthlyTrends = await this.paymentModel.aggregate([
       {

@@ -25,6 +25,9 @@ import { CheckoutModule } from './checkout/checkout.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { AutopayModule } from './autopay/autopay.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
+import { RuntimeModule } from './common/runtime/runtime.module';
+import { CompanyContextModule } from './common/company-context/company-context.module';
+import { GLOBAL_THROTTLE } from './config/throttle.config';
 
 @Module({
   imports: [
@@ -32,6 +35,8 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+    RuntimeModule,
+    CompanyContextModule,
     EmailModule,
     WhatsAppModule,
     MongooseModule.forRootAsync({
@@ -78,13 +83,8 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
         };
       },
     }),
-    // Global rate limiting : 100 requests / minute per IP by default.
-    ThrottlerModule.forRoot([
-      {
-        ttl: 60_000,
-        limit: 100,
-      },
-    ]),
+    // Global rate limiting — values live in config/throttle.config.ts
+    ThrottlerModule.forRoot([GLOBAL_THROTTLE]),
     AuthModule,
     UsersModule,
     CompaniesModule,

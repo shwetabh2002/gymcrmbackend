@@ -34,6 +34,10 @@ import {
 import { LocationsService } from '../locations/locations.service';
 import { StorageService } from '../storage/storage.service';
 import { PaymentsService } from '../payments/payments.service';
+import { CompanyContextService } from '../common/company-context/company-context.service';
+import { EmailTemplatesService } from '../email/email-templates.service';
+import { EMAIL_TYPES } from '../config/email-templates.config';
+import { toIsoDate } from '../config/time.constants';
 
 type LocScope = { locationId?: string };
 
@@ -53,6 +57,8 @@ export class MembersService {
     private storageService: StorageService,
     @Inject(forwardRef(() => PaymentsService))
     private paymentsService: PaymentsService,
+    private companyContext: CompanyContextService,
+    private emailTemplates: EmailTemplatesService,
   ) {}
 
   async create(
@@ -148,6 +154,26 @@ export class MembersService {
         );
       }
 
+      // Plan + dates for the welcome mail, read back from what was just created.
+      const subscriptionSummary = createDto.planId
+        ? await this.memberSubscriptionModel
+            .findOne({ companyId, memberId: saved._id as any })
+            .populate('planId', 'name')
+            .sort({ createdAt: -1 })
+            .lean()
+            .exec()
+            .then((sub: any) =>
+              sub
+                ? {
+                    planName: sub.planId?.name as string | undefined,
+                    startDate: toIsoDate(new Date(sub.startDate)),
+                    expiryDate: toIsoDate(new Date(sub.expiryDate)),
+                  }
+                : null,
+            )
+            .catch(() => null)
+        : null;
+
       if (actor) {
         try {
           await this.activityLogsService.log({
@@ -165,8 +191,35 @@ export class MembersService {
         }
       }
 
+      // Best-effort welcome mail: a mail failure must not undo a real member.
+      const emailResult = await this.emailTemplates
+        .sendTemplated({
+          companyId,
+          type: EMAIL_TYPES.memberWelcome,
+          to: saved.email,
+          send: createDto.sendEmail !== false,
+          vars: {
+            memberName: saved.name,
+            memberId: saved.idNo || '',
+            planName: subscriptionSummary?.planName || 'Membership',
+            startDate: subscriptionSummary?.startDate || '',
+            expiryDate: subscriptionSummary?.expiryDate || '',
+            amount: createDto.amount
+              ? await this.companyContext.formatMoney(
+                  companyId,
+                  createDto.amount,
+                )
+              : '',
+          },
+        })
+        .catch(() => ({ sent: false }));
+
       const client = await this.findById(companyId, String(saved._id));
-      return { ...client, initialPaymentId };
+      return {
+        ...client,
+        initialPaymentId,
+        welcomeEmailSent: emailResult.sent,
+      };
     } catch (err) {
       // Don't leave orphan member / sub / payment if later steps fail
       const memberOid = saved._id;
@@ -231,7 +284,10 @@ export class MembersService {
     }
     if (received > planPrice) {
       throw new BadRequestException(
-        `Received amount cannot exceed plan price ₹${planPrice}`,
+        `Received amount cannot exceed plan price ${await this.companyContext.formatMoney(
+          companyId,
+          planPrice,
+        )}`,
       );
     }
 

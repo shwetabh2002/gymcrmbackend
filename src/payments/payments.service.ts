@@ -37,8 +37,14 @@ import {
 } from '../invoices/tax.util';
 import { StorageService } from '../storage/storage.service';
 import { PaymentMode } from '../common/enums/payment-mode.enum';
+import { CompanyContextService } from '../common/company-context/company-context.service';
+import { EmailTemplatesService } from '../email/email-templates.service';
+import { EMAIL_TYPES } from '../config/email-templates.config';
 
 type LocScope = { locationId?: string };
+
+/** Guards against float noise when comparing money. */
+const AMOUNT_TOLERANCE = 0.01;
 
 @Injectable()
 export class PaymentsService {
@@ -57,6 +63,8 @@ export class PaymentsService {
     private countersService: CountersService,
     private activityLogsService: ActivityLogsService,
     private storageService: StorageService,
+    private companyContext: CompanyContextService,
+    private emailTemplates: EmailTemplatesService,
   ) {}
 
   async create(
@@ -65,6 +73,12 @@ export class PaymentsService {
     receivedById: string,
     actor?: ActivityActor,
     writeLocationId?: string,
+    /**
+     * Provider-driven writes (checkout, autopay) describe money that has already
+     * left the member's account. Refusing to record it would leave the ledger
+     * wrong, so the pending-amount cap applies to staff entries only.
+     */
+    options?: { allowExceedPending?: boolean },
   ): Promise<PaymentDocument> {
     const subscription = await this.memberSubscriptionModel
       .findOne({ _id: createDto.subscriptionId, companyId })
@@ -76,9 +90,8 @@ export class PaymentsService {
     }
 
     const locationId =
-      (subscription.locationId
-        ? String(subscription.locationId)
-        : null) || writeLocationId;
+      (subscription.locationId ? String(subscription.locationId) : null) ||
+      writeLocationId;
     if (!locationId) {
       throw new BadRequestException(
         'locationId required — select a location or ensure subscription has one',
@@ -100,17 +113,36 @@ export class PaymentsService {
 
     const receivedBy = await this.userModel.findById(receivedById).exec();
     if (!receivedBy) {
-      throw new NotFoundException(
-        `User with ID ${receivedById} not found`,
-      );
+      throw new NotFoundException(`User with ID ${receivedById} not found`);
     }
     const sameCompany =
-      receivedBy.companyId &&
-      receivedBy.companyId.toString() === companyId;
+      receivedBy.companyId && receivedBy.companyId.toString() === companyId;
     const isPlatformSuper = receivedBy.role === Role.SUPER_ADMIN;
     if (!sameCompany && !isPlatformSuper) {
-      throw new NotFoundException(
-        `User with ID ${receivedById} not found`,
+      throw new NotFoundException(`User with ID ${receivedById} not found`);
+    }
+
+    if (!(createDto.amount > 0)) {
+      throw new BadRequestException('Amount must be greater than 0');
+    }
+    // A payment can never exceed what the current cycle still owes. Autopay and
+    // checkout are safe by construction; this closes the direct API path.
+    const owed = Number(subscription.pendingAmount) || 0;
+    if (createDto.amount > owed + AMOUNT_TOLERANCE) {
+      if (!options?.allowExceedPending) {
+        throw new BadRequestException(
+          owed <= 0
+            ? 'This subscription is fully paid — nothing is pending'
+            : `Amount cannot exceed the pending ${await this.companyContext.formatMoney(
+                companyId,
+                owed,
+              )}`,
+        );
+      }
+      // Recorded anyway, but loudly — a provider charging more than we expected
+      // is worth a human look.
+      this.logger.warn(
+        `Payment ${createDto.amount} exceeds pending ${owed} on subscription ${createDto.subscriptionId} — recorded because it came from the payment provider`,
       );
     }
 
@@ -146,6 +178,31 @@ export class PaymentsService {
       receivedById,
     );
 
+    // Receipt to the member — best effort, never blocks the payment.
+    void this.emailTemplates
+      .sendTemplated({
+        companyId,
+        type: EMAIL_TYPES.paymentReceipt,
+        to: member.email,
+        vars: {
+          memberName: member.name,
+          amount: await this.companyContext.formatMoney(
+            companyId,
+            createDto.amount,
+          ),
+          paymentDate: createDto.paymentDate,
+          paymentMode: createDto.paymentMode,
+          invoiceNumber: await this.invoiceModel
+            .findOne({ companyId, paymentId: savedPayment._id as any })
+            .select('invoiceNumber')
+            .lean()
+            .exec()
+            .then((inv) => inv?.invoiceNumber || '')
+            .catch(() => ''),
+        },
+      })
+      .catch(() => undefined);
+
     const actorName = actor?.name || receivedBy.name;
     try {
       await this.activityLogsService.log({
@@ -158,7 +215,10 @@ export class PaymentsService {
         action: 'PAYMENT_CREATE',
         entityType: 'payment',
         entityId: String(savedPayment._id),
-        summary: `${actorName} recorded ₹${createDto.amount} from ${member.name}`,
+        summary: `${actorName} recorded ${await this.companyContext.formatMoney(
+          companyId,
+          createDto.amount,
+        )} from ${member.name}`,
         metadata: {
           amount: createDto.amount,
           paymentMode: createDto.paymentMode,
@@ -221,6 +281,7 @@ export class PaymentsService {
       input.receivedById,
       undefined,
       input.locationId,
+      { allowExceedPending: true },
     ).then(async (payment) => {
       await this.paymentModel
         .updateOne(
@@ -280,7 +341,10 @@ export class PaymentsService {
     const invoice = await this.invoiceModel
       .findOne({ companyId, paymentId: payment._id as any, deletedAt: null })
       .exec();
-    return { created: !!invoice, invoiceId: invoice ? String(invoice._id) : undefined };
+    return {
+      created: !!invoice,
+      invoiceId: invoice ? String(invoice._id) : undefined,
+    };
   }
 
   private async generateInvoiceForPayment(
@@ -511,7 +575,10 @@ export class PaymentsService {
         }
         if (delta > 0 && delta > subscription.pendingAmount) {
           throw new BadRequestException(
-            `Amount increase cannot exceed pending ₹${subscription.pendingAmount}`,
+            `Amount increase cannot exceed pending ${await this.companyContext.formatMoney(
+              companyId,
+              subscription.pendingAmount,
+            )}`,
           );
         }
         await this.memberSubscriptionsService.applyPaymentDelta(
@@ -583,7 +650,10 @@ export class PaymentsService {
         action: 'PAYMENT_UPDATE',
         entityType: 'payment',
         entityId: id,
-        summary: `${actor.name} updated payment ₹${updatedPayment.amount}`,
+        summary: `${actor.name} updated payment ${await this.companyContext.formatMoney(
+          companyId,
+          updatedPayment.amount,
+        )}`,
       });
     }
 
@@ -635,7 +705,10 @@ export class PaymentsService {
         action: 'PAYMENT_VOID',
         entityType: 'payment',
         entityId: id,
-        summary: `${actor.name} voided ₹${payment.amount} payment for ${memberName}`,
+        summary: `${actor.name} voided ${await this.companyContext.formatMoney(
+          companyId,
+          payment.amount,
+        )} payment for ${memberName}`,
         metadata: { amount: payment.amount },
       });
     }

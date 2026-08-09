@@ -3,6 +3,10 @@ import { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import helmet from 'helmet';
+import { RuntimeService } from './common/runtime/runtime.service';
+
+/** Listen on every interface so containers and LAN devices can reach the API. */
+const BIND_ALL_INTERFACES = '0.0.0.0';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
@@ -11,7 +15,21 @@ async function bootstrap() {
   logger.log(`📦 Node Environment: ${process.env.NODE_ENV || 'development'}`);
   logger.log(`🔢 Node Version: ${process.version}`);
 
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody is what Razorpay signs — without it webhook verification cannot work.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
+
+  // Refuse to run a production server on development secrets / mock providers.
+  const runtime = app.get(RuntimeService);
+  const problems = runtime.productionProblems();
+  if (problems.length) {
+    logger.error('❌ Refusing to start in production:');
+    problems.forEach((p) => logger.error(`   • ${p}`));
+    await app.close();
+    process.exit(1);
+  }
+  runtime.logMode();
 
   // Security headers — allow CRM (other origin) to load S3 images via CORS/canvas
   app.use(
@@ -20,23 +38,13 @@ async function bootstrap() {
     }),
   );
 
-  const port = process.env.PORT || 3000;
-  const host = '0.0.0.0'; // Bind to all network interfaces for Render/Docker
-
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-  const marketingUrl =
-    process.env.MARKETING_URL || 'http://localhost:3001';
-  const extra = (process.env.ADDITIONAL_CORS_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const port = runtime.port();
+  const host = BIND_ALL_INTERFACES; // Render/Docker need every interface
 
   // CORS must run early so stamp/logo <img crossOrigin> works from CRM
-  app.enableCors({
-    origin: [frontendUrl, marketingUrl, ...extra],
-    credentials: true,
-  });
-  logger.log(`🌐 CORS: ${[frontendUrl, marketingUrl, ...extra].join(', ')}`);
+  const origins = runtime.corsOrigins();
+  app.enableCors({ origin: origins, credentials: true });
+  logger.log(`🌐 CORS: ${origins.join(', ')}`);
 
   // Enable global validation pipes
   app.useGlobalPipes(
@@ -50,16 +58,18 @@ async function bootstrap() {
 
   await app.listen(port, host);
 
+  const publicUrl = runtime.backendPublicUrl();
+
   logger.log('');
   logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  logger.log(`🎯 Application is running on: http://localhost:${port}`);
+  logger.log(`🎯 Application is running on: ${publicUrl}`);
   logger.log(`🌐 Listening on: ${host}:${port}`);
   logger.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   logger.log('');
   logger.log('📋 Available Endpoints:');
-  logger.log(`   POST   http://localhost:${port}/auth/admin/login`);
-  logger.log(`   POST   http://localhost:${port}/auth/refresh`);
-  logger.log(`   POST   http://localhost:${port}/auth/logout`);
+  logger.log(`   POST   ${publicUrl}/auth/admin/login`);
+  logger.log(`   POST   ${publicUrl}/auth/refresh`);
+  logger.log(`   POST   ${publicUrl}/auth/logout`);
   logger.log('');
 }
 

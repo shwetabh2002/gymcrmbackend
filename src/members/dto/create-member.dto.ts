@@ -1,4 +1,6 @@
 import {
+  IsBoolean,
+  IsIn,
   IsDateString,
   IsEmail,
   IsEnum,
@@ -13,6 +15,7 @@ import {
 import { MemberStatus } from '../../common/enums/member-status.enum';
 import { TrainingType } from '../../common/enums/training-type.enum';
 import { PaymentMode } from '../../common/enums/payment-mode.enum';
+import { ACTIVE_PAYMENT_MODES } from '../../config/payment-modes.config';
 
 export class CreateMemberDto {
   @IsString()
@@ -88,7 +91,8 @@ export class CreateMemberDto {
   @Min(0)
   received?: number;
 
-  @IsEnum(PaymentMode)
+  /** Cash or Online — the manual-fill collection modes. */
+  @IsIn(ACTIVE_PAYMENT_MODES)
   @IsOptional()
   paymentMode?: PaymentMode;
 
@@ -101,4 +105,14 @@ export class CreateMemberDto {
   @IsString()
   @IsOptional()
   photoUrl?: string;
+
+  /** Send the welcome email. Default true; needs the member's email address. */
+  @IsBoolean()
+  @IsOptional()
+  sendEmail?: boolean;
+
+  /** Send a welcome message on WhatsApp. Default true. */
+  @IsBoolean()
+  @IsOptional()
+  sendWhatsApp?: boolean;
 }

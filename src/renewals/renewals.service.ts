@@ -12,6 +12,11 @@ import {
   ActivityLogsService,
   ActivityActor,
 } from '../activity-logs/activity-logs.service';
+import { addDays, daysBetween } from '../config/time.constants';
+import {
+  EXPIRY_SOON_DAYS,
+  EXPIRY_WINDOW_DAYS,
+} from '../config/renewals.config';
 
 export interface RenewalQueueQuery {
   withinDays?: number;
@@ -30,17 +35,16 @@ export class RenewalsService {
   ) {}
 
   async getQueue(companyId: string, query: RenewalQueueQuery = {}) {
-    const withinDays = Number(query.withinDays ?? 7);
+    const withinDays = Number(query.withinDays ?? EXPIRY_SOON_DAYS);
     const includeExpired = query.includeExpired !== false;
-    const expiredWithinDays = Number(query.expiredWithinDays ?? 30);
+    const expiredWithinDays = Number(
+      query.expiredWithinDays ?? EXPIRY_WINDOW_DAYS,
+    );
     const statusFilter = query.status ?? 'OPEN';
 
     const now = new Date();
-    const future = new Date(now);
-    future.setDate(future.getDate() + withinDays);
-
-    const past = new Date(now);
-    past.setDate(past.getDate() - expiredWithinDays);
+    const future = addDays(now, withinDays);
+    const past = addDays(now, -expiredWithinDays);
 
     const orConditions: Record<string, unknown>[] = [
       {
@@ -118,8 +122,8 @@ export class RenewalsService {
 
   async getCounts(
     companyId: string,
-    withinDays = 7,
-    expiredWithinDays = 30,
+    withinDays = EXPIRY_SOON_DAYS,
+    expiredWithinDays = EXPIRY_WINDOW_DAYS,
     locScope: { locationId?: string } = {},
   ) {
     const items = await this.getQueue(companyId, {
@@ -242,9 +246,7 @@ export class RenewalsService {
     const member = sub?.memberId;
     const plan = sub?.planId;
     const expiry = new Date(sub.expiryDate);
-    const daysRemaining = Math.ceil(
-      (expiry.getTime() - now.getTime()) / (1000 * 60 * 60 * 24),
-    );
+    const daysRemaining = daysBetween(now, expiry);
 
     return {
       _id: String(sub._id),

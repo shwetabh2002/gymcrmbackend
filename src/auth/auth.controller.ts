@@ -7,6 +7,7 @@ import {
   HttpStatus,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { LOGIN_THROTTLE } from '../config/throttle.config';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
@@ -18,7 +19,7 @@ export class AuthController {
   constructor(private authService: AuthService) {}
 
   // Brute-force protection: max 5 login attempts / minute per IP.
-  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Throttle({ default: LOGIN_THROTTLE })
   @Post('admin/login')
   @HttpCode(HttpStatus.OK)
   async adminLogin(@Body() loginDto: LoginDto) {
