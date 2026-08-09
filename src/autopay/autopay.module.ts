@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AutopayWorkerService } from './autopay-worker.service';
+import { MandatesService } from './mandates.service';
 import { AutopayController } from './autopay.controller';
 import {
   MemberSubscription,
@@ -13,6 +14,7 @@ import {
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { PaymentProviderModule } from '../payment-provider/payment-provider.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { MemberSubscriptionsModule } from '../member-subscriptions/member-subscriptions.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { GymSettingsModule } from '../gym-settings/gym-settings.module';
 
@@ -25,11 +27,12 @@ import { GymSettingsModule } from '../gym-settings/gym-settings.module';
     ]),
     PaymentProviderModule,
     forwardRef(() => PaymentsModule),
+    forwardRef(() => MemberSubscriptionsModule),
     WhatsAppModule,
     GymSettingsModule,
   ],
-  providers: [AutopayWorkerService],
+  providers: [AutopayWorkerService, MandatesService],
   controllers: [AutopayController],
-  exports: [AutopayWorkerService],
+  exports: [AutopayWorkerService, MandatesService],
 })
 export class AutopayModule {}

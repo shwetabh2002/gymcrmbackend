@@ -3,6 +3,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { RazorpayWebhookController } from './razorpay-webhook.controller';
 import { CheckoutModule } from '../checkout/checkout.module';
 import { PaymentProviderModule } from '../payment-provider/payment-provider.module';
+import { AutopayModule } from '../autopay/autopay.module';
 import {
   CheckoutSession,
   CheckoutSessionSchema,
@@ -12,6 +13,7 @@ import {
   imports: [
     forwardRef(() => CheckoutModule),
     PaymentProviderModule,
+    forwardRef(() => AutopayModule),
     MongooseModule.forFeature([
       { name: CheckoutSession.name, schema: CheckoutSessionSchema },
     ]),

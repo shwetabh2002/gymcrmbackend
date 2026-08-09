@@ -80,6 +80,23 @@ export class CheckoutSession {
   @Prop({ type: String, default: null })
   razorpayPaymentLinkId: string | null;
 
+  /**
+   * Mandate registration link id (inv_…) when this checkout asks for UPI
+   * Autopay. Webhooks for auth links arrive as invoice.* events.
+   */
+  @Prop({ type: String, default: null, index: true })
+  razorpayAuthLinkId: string | null;
+
+  /** Mandate terms shown to the member, in ₹ (not paise). */
+  @Prop({ type: Number, default: null })
+  mandateMaxAmount: number | null;
+
+  @Prop({ type: Date, default: null })
+  mandateExpireAt: Date | null;
+
+  @Prop({ type: String, default: null })
+  mandateMethod: string | null;
+
   @Prop({ type: String, default: null })
   shareUrl: string | null;
 
@@ -100,6 +117,12 @@ export class CheckoutSession {
   /** E.164-ish digits the auto-send targeted (91XXXXXXXXXX) */
   @Prop({ type: String, default: null })
   whatsappToPhone: string | null;
+
+  @Prop({ type: Boolean, default: false })
+  emailSent: boolean;
+
+  @Prop({ type: String, default: null })
+  emailToAddress: string | null;
 
   @Prop({ type: String, default: null })
   idempotencyKey: string | null;

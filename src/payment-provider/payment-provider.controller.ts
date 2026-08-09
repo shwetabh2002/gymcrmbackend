@@ -11,7 +11,8 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { ConfigService } from '@nestjs/config';
+import { RuntimeService } from '../common/runtime/runtime.service';
+import { CRM_ROUTES } from '../config/crm-routes.config';
 import { IsOptional, IsString } from 'class-validator';
 import { PaymentProviderService } from './payment-provider.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -32,12 +33,18 @@ class ConnectApiKeysDto {
   accountName?: string;
 }
 
+class WebhookSecretDto {
+  /** Empty string clears the gym-specific secret (env secret takes over). */
+  @IsString()
+  secret: string;
+}
+
 /** Path must not live under /payments/:id (Nest registers PaymentsController first). */
 @Controller('payment-provider')
 export class PaymentProviderController {
   constructor(
     private readonly provider: PaymentProviderService,
-    private readonly config: ConfigService,
+    private readonly runtime: RuntimeService,
   ) {}
 
   @Get()
@@ -64,16 +71,16 @@ export class PaymentProviderController {
     @Query('state') state: string,
     @Res() res: Response,
   ) {
-    const frontend =
-      this.config.get('CRM_PUBLIC_URL') ||
-      this.config.get('FRONTEND_URL') ||
-      'http://localhost:3000';
     try {
       if (!code || !state) throw new Error('Missing code/state');
       await this.provider.handleOAuthCallback(code, state);
-      return res.redirect(`${frontend}/settings?razorpay=connected`);
+      return res.redirect(
+        this.runtime.crmUrl(`${CRM_ROUTES.settings}?razorpay=connected`),
+      );
     } catch {
-      return res.redirect(`${frontend}/settings?razorpay=error`);
+      return res.redirect(
+        this.runtime.crmUrl(`${CRM_ROUTES.settings}?razorpay=error`),
+      );
     }
   }
 
@@ -101,6 +108,18 @@ export class PaymentProviderController {
   @HttpCode(HttpStatus.OK)
   connectMock(@CompanyId() companyId: string, @Request() req: any) {
     return this.provider.connectMock(companyId, req.user.userId);
+  }
+
+  /** Gym pastes the signing secret it created in its own Razorpay dashboard. */
+  @Post('razorpay/webhook-secret')
+  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @RequirePermissions(Permission.SETTINGS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  setWebhookSecret(
+    @CompanyId() companyId: string,
+    @Body() body: WebhookSecretDto,
+  ) {
+    return this.provider.setWebhookSecret(companyId, body.secret);
   }
 
   @Post('razorpay/disconnect')

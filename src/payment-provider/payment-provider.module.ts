@@ -4,6 +4,7 @@ import {
   PaymentProviderAccount,
   PaymentProviderAccountSchema,
 } from './schemas/payment-provider-account.schema';
+import { OAuthState, OAuthStateSchema } from './schemas/oauth-state.schema';
 import { PaymentProviderService } from './payment-provider.service';
 import { PaymentProviderController } from './payment-provider.controller';
 import { RazorpayApiService } from './razorpay-api.service';
@@ -16,6 +17,7 @@ import { TokenEncryptionService } from '../common/crypto/token-encryption.servic
         name: PaymentProviderAccount.name,
         schema: PaymentProviderAccountSchema,
       },
+      { name: OAuthState.name, schema: OAuthStateSchema },
     ]),
   ],
   providers: [

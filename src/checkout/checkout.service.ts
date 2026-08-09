@@ -29,7 +29,12 @@ import {
 import { UserType } from '../common/enums/user-type.enum';
 import { Role } from '../common/enums/role.enum';
 import { MemberStatus } from '../common/enums/member-status.enum';
-import { MemberOnboardingStatus, BillingMode, MandateStatus, PaymentSource } from '../common/enums/billing.enum';
+import {
+  MemberOnboardingStatus,
+  BillingMode,
+  MandateStatus,
+  PaymentSource,
+} from '../common/enums/billing.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PaymentStatus } from '../common/enums/payment-status.enum';
 import { PaymentMode } from '../common/enums/payment-mode.enum';
@@ -40,7 +45,60 @@ import { PaymentProviderService } from '../payment-provider/payment-provider.ser
 import { RazorpayApiService } from '../payment-provider/razorpay-api.service';
 import { WhatsAppService } from '../whatsapp/whatsapp.service';
 import { PaymentsService } from '../payments/payments.service';
+import { MemberSubscriptionsService } from '../member-subscriptions/member-subscriptions.service';
+import { EmailTemplatesService } from '../email/email-templates.service';
+import { EMAIL_TYPES } from '../config/email-templates.config';
+import { CompanyContextService } from '../common/company-context/company-context.service';
 import { RenewalFollowUpStatus } from '../common/enums/renewal-follow-up-status.enum';
+import {
+  CHECKOUT_LINK_TTL_MS,
+  DEFAULT_MANDATE_MULTIPLIER,
+  DEFAULT_MANDATE_VALIDITY_MONTHS,
+} from '../config/autopay.config';
+import {
+  DEFAULT_MANDATE_METHOD,
+  MANDATE_MAX_AMOUNT_BY_METHOD,
+  MandateMethod,
+  isMandateMethod,
+  toMinorUnits,
+} from '../config/razorpay.config';
+import {
+  CHARGE_KINDS,
+  PAYMENT_NOTE_KEYS,
+  noteFlag,
+} from '../config/payment-notes.config';
+import { toUnixSeconds } from '../config/time.constants';
+
+/**
+ * Terms the member sees and approves once: the most that may ever be debited in
+ * one go, and how long the mandate lives. Both are per-gym configurable.
+ */
+export function resolveMandateTerms(
+  planPrice: number,
+  settings: any,
+): { maxAmount: number; expireAt: Date; method: MandateMethod } {
+  const multiplier =
+    Number(settings?.autopayMandateMultiplier) > 0
+      ? Number(settings.autopayMandateMultiplier)
+      : DEFAULT_MANDATE_MULTIPLIER;
+  const months =
+    Number(settings?.autopayMandateValidityMonths) > 0
+      ? Number(settings.autopayMandateValidityMonths)
+      : DEFAULT_MANDATE_VALIDITY_MONTHS;
+  const method = isMandateMethod(settings?.autopayMethod)
+    ? settings.autopayMethod
+    : DEFAULT_MANDATE_METHOD;
+
+  // Never ask for more headroom than the instrument's scheme allows.
+  const requested = Math.ceil(Math.max(Number(planPrice) || 0, 1) * multiplier);
+  const schemeCap = MANDATE_MAX_AMOUNT_BY_METHOD[method];
+  const maxAmount = schemeCap ? Math.min(requested, schemeCap) : requested;
+
+  const expireAt = new Date();
+  expireAt.setMonth(expireAt.getMonth() + months);
+
+  return { maxAmount, expireAt, method };
+}
 
 @Injectable()
 export class CheckoutService {
@@ -63,6 +121,8 @@ export class CheckoutService {
     private razorpay: RazorpayApiService,
     private whatsapp: WhatsAppService,
     private paymentsService: PaymentsService,
+    private emailTemplates: EmailTemplatesService,
+    private companyContext: CompanyContextService,
   ) {}
 
   async createCheckout(
@@ -84,7 +144,10 @@ export class CheckoutService {
     const phoneClash = await this.userModel
       .findOne({ companyId, userType: UserType.MEMBER, phone })
       .exec();
-    if (phoneClash && phoneClash.onboardingStatus === MemberOnboardingStatus.ACTIVE) {
+    if (
+      phoneClash &&
+      phoneClash.onboardingStatus === MemberOnboardingStatus.ACTIVE
+    ) {
       throw new BadRequestException(
         `Phone ${phone} is already registered for a member`,
       );
@@ -104,23 +167,13 @@ export class CheckoutService {
     }
 
     const startDate = new Date(dto.startingDate);
-    let expiryDate: Date;
-    if (dto.expiryDate) {
-      expiryDate = new Date(dto.expiryDate);
-    } else {
-      expiryDate = new Date(startDate);
-      switch (plan.durationType) {
-        case 'DAYS':
-          expiryDate.setDate(expiryDate.getDate() + plan.duration);
-          break;
-        case 'MONTHS':
-          expiryDate.setMonth(expiryDate.getMonth() + plan.duration);
-          break;
-        case 'YEARS':
-          expiryDate.setFullYear(expiryDate.getFullYear() + plan.duration);
-          break;
-      }
-    }
+    const expiryDate = dto.expiryDate
+      ? new Date(dto.expiryDate)
+      : MemberSubscriptionsService.addPlanDuration(
+          startDate,
+          plan.duration,
+          plan.durationType,
+        );
 
     const settings = await this.gymSettings.get(companyId);
     const companyAutopayOn = settings.autopayEnabled === true;
@@ -138,12 +191,13 @@ export class CheckoutService {
     ) {
       draft = phoneClash;
       draft.name = dto.name.trim();
+      if (dto.email?.trim()) draft.email = dto.email.trim().toLowerCase();
       draft.locationId = new Types.ObjectId(dto.locationId) as any;
       await draft.save();
     } else {
       draft = await this.userModel.create({
         name: dto.name.trim(),
-        email: null,
+        email: dto.email?.trim().toLowerCase() || null,
         phone,
         password: 'N/A',
         userType: UserType.MEMBER,
@@ -164,22 +218,30 @@ export class CheckoutService {
     }
 
     const sessionId = randomUUID();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    const expiresAt = new Date(Date.now() + CHECKOUT_LINK_TTL_MS);
 
-    const creds = await this.paymentProvider.getCredentials(companyId);
-    const link = await this.razorpay.createPaymentLink(creds, {
-      amountPaise: Math.round(received * 100),
-      customer: { name: draft.name, contact: phone },
-      description: `${plan.name} — ${enableAutopay ? 'UPI Autopay setup' : 'Membership payment'}`,
+    const link = await this.createProviderLink({
+      companyId,
+      sessionId,
       enableAutopay,
-      notes: {
-        companyId,
-        sessionId,
-        draftMemberId: String(draft._id),
-        planId: String(plan._id),
-        enableAutopay: enableAutopay ? '1' : '0',
+      amount: received,
+      planPrice: amount,
+      planName: plan.name,
+      member: {
+        id: String(draft._id),
+        name: draft.name,
+        phone,
+        email: draft.email || undefined,
+        rzpCustomerId: draft.rzpCustomerId || null,
       },
+      planId: String(plan._id),
+      settings,
+      linkExpiresAt: expiresAt,
     });
+
+    // Both notifications are opt-out from the member form; default is on.
+    const wantsWhatsApp = dto.sendWhatsApp !== false;
+    const wantsEmail = dto.sendEmail !== false;
 
     const wa = await this.whatsapp.sendPaymentTemplate({
       companyId,
@@ -189,6 +251,20 @@ export class CheckoutService {
       payUrl: link.shortUrl,
       gymName: (settings as any).gymName || undefined,
       checkoutSessionId: sessionId,
+      send: wantsWhatsApp,
+    });
+
+    const emailResult = await this.emailTemplates.sendTemplated({
+      companyId,
+      type: EMAIL_TYPES.paymentLink,
+      to: draft.email,
+      send: wantsEmail,
+      vars: {
+        memberName: draft.name,
+        planName: plan.name,
+        amount: await this.companyContext.formatMoney(companyId, received),
+        payUrl: link.shortUrl,
+      },
     });
 
     const session = await this.sessionModel.create({
@@ -207,13 +283,19 @@ export class CheckoutService {
       enableAutopay,
       razorpayCustomerId: link.customerId,
       razorpayOrderId: link.orderId,
-      razorpayPaymentLinkId: link.id,
+      razorpayPaymentLinkId: link.kind === 'payment_link' ? link.id : null,
+      razorpayAuthLinkId: link.kind === 'auth_link' ? link.id : null,
+      mandateMaxAmount: link.mandateMaxAmount,
+      mandateExpireAt: link.mandateExpireAt,
+      mandateMethod: link.mandateMethod,
       shareUrl: link.shortUrl,
       qrData: link.qrData,
       whatsappUrl: wa.shareUrl,
       whatsappMode: wa.mode,
       whatsappSent: wa.sent,
       whatsappToPhone: wa.toPhone,
+      emailSent: emailResult.sent,
+      emailToAddress: draft.email || null,
       idempotencyKey: dto.idempotencyKey || null,
       expiresAt,
       createdByUserId: staffUserId,
@@ -225,6 +307,121 @@ export class CheckoutService {
     }
 
     return this.toClient(session);
+  }
+
+  /**
+   * Builds the link the member actually pays on.
+   *
+   * autopay ON  → Razorpay *authorization link*: the member approves a UPI
+   *               Autopay mandate and pays the first amount in one step. This is
+   *               the only way a reusable token is created; a plain payment link
+   *               never produces one.
+   * autopay OFF → ordinary one-time payment link.
+   */
+  private async createProviderLink(input: {
+    companyId: string;
+    sessionId: string;
+    enableAutopay: boolean;
+    /** Amount to collect right now. */
+    amount: number;
+    /** Full plan price — drives the mandate ceiling. */
+    planPrice: number;
+    planName: string;
+    planId: string;
+    member: {
+      id: string;
+      name: string;
+      phone: string;
+      email?: string;
+      rzpCustomerId?: string | null;
+    };
+    settings: any;
+    linkExpiresAt: Date;
+  }): Promise<{
+    kind: 'auth_link' | 'payment_link';
+    id: string;
+    shortUrl: string;
+    orderId: string | null;
+    customerId: string | null;
+    qrData: string;
+    mandateMaxAmount: number | null;
+    mandateExpireAt: Date | null;
+    mandateMethod: string | null;
+  }> {
+    const creds = await this.paymentProvider.getCredentials(input.companyId);
+    const notes: Record<string, string> = {
+      [PAYMENT_NOTE_KEYS.companyId]: input.companyId,
+      [PAYMENT_NOTE_KEYS.sessionId]: input.sessionId,
+      [PAYMENT_NOTE_KEYS.draftMemberId]: input.member.id,
+      [PAYMENT_NOTE_KEYS.planId]: input.planId,
+      [PAYMENT_NOTE_KEYS.enableAutopay]: noteFlag(input.enableAutopay),
+    };
+
+    if (!input.enableAutopay) {
+      const link = await this.razorpay.createPaymentLink(creds, {
+        amountPaise: toMinorUnits(input.amount),
+        customer: {
+          name: input.member.name,
+          contact: input.member.phone,
+          ...(input.member.email ? { email: input.member.email } : {}),
+        },
+        description: `${input.planName} — membership payment`,
+        notes,
+      });
+      return {
+        kind: 'payment_link',
+        id: link.id,
+        shortUrl: link.shortUrl,
+        orderId: link.orderId,
+        customerId: link.customerId,
+        qrData: link.qrData,
+        mandateMaxAmount: null,
+        mandateExpireAt: null,
+        mandateMethod: null,
+      };
+    }
+
+    const { maxAmount, expireAt, method } = resolveMandateTerms(
+      input.planPrice,
+      input.settings,
+    );
+
+    // A mandate must belong to a Razorpay customer; reuse the member's if known.
+    const customerId =
+      input.member.rzpCustomerId ||
+      (await this.razorpay.createCustomer(creds, {
+        name: input.member.name,
+        contact: input.member.phone,
+        email: input.member.email,
+      }));
+
+    const link = await this.razorpay.createAuthorizationLink(creds, {
+      amountPaise: toMinorUnits(input.amount),
+      customer: {
+        name: input.member.name,
+        contact: input.member.phone,
+        ...(input.member.email ? { email: input.member.email } : {}),
+      },
+      description: `${input.planName} — UPI Autopay setup + first payment`,
+      maxAmountPaise: toMinorUnits(maxAmount),
+      mandateExpireAt: toUnixSeconds(expireAt),
+      linkExpireAt: toUnixSeconds(input.linkExpiresAt),
+      method,
+      receipt: `chk_${input.sessionId.slice(0, 18)}`,
+      notes: { ...notes, [PAYMENT_NOTE_KEYS.kind]: CHARGE_KINDS.mandate },
+    });
+
+    return {
+      kind: 'auth_link',
+      id: link.id,
+      shortUrl: link.shortUrl,
+      orderId: link.orderId,
+      customerId: link.customerId || customerId,
+      qrData: link.qrData,
+      mandateMaxAmount: maxAmount,
+      mandateExpireAt: expireAt,
+      mandateMethod: link.method,
+    };
   }
 
   async getSession(companyId: string, sessionId: string) {
@@ -254,20 +451,31 @@ export class CheckoutService {
     const member = await this.userModel.findById(session.draftMemberId).exec();
     if (!member?.phone) throw new BadRequestException('Member phone missing');
 
-    const companyAutopayOn = await this.gymSettings.isAutopayEnabled(companyId);
+    const settings = await this.gymSettings.get(companyId);
+    const companyAutopayOn = settings.autopayEnabled === true;
     const enableAutopay = companyAutopayOn && session.enableAutopay;
+    const plan = await this.planModel
+      .findOne({ _id: session.planId, companyId })
+      .exec();
 
-    const creds = await this.paymentProvider.getCredentials(companyId);
-    const link = await this.razorpay.createPaymentLink(creds, {
-      amountPaise: Math.round(session.receivedIntent * 100),
-      customer: { name: member.name, contact: member.phone },
-      description: 'Membership payment (resent)',
+    const expiresAt = new Date(Date.now() + CHECKOUT_LINK_TTL_MS);
+    const link = await this.createProviderLink({
+      companyId,
+      sessionId: session.sessionId,
       enableAutopay,
-      notes: {
-        companyId,
-        sessionId: session.sessionId,
-        draftMemberId: String(member._id),
+      amount: session.receivedIntent,
+      planPrice: session.amount,
+      planName: plan?.name || 'Membership',
+      planId: String(session.planId),
+      member: {
+        id: String(member._id),
+        name: member.name,
+        phone: member.phone,
+        email: member.email || undefined,
+        rzpCustomerId: member.rzpCustomerId || null,
       },
+      settings,
+      linkExpiresAt: expiresAt,
     });
 
     const wa = await this.whatsapp.sendPaymentTemplate({
@@ -276,7 +484,23 @@ export class CheckoutService {
       memberName: member.name,
       amount: session.receivedIntent,
       payUrl: link.shortUrl,
+      gymName: (settings as any).gymName || undefined,
       checkoutSessionId: session.sessionId,
+    });
+
+    const emailResult = await this.emailTemplates.sendTemplated({
+      companyId,
+      type: EMAIL_TYPES.paymentLink,
+      to: member.email,
+      vars: {
+        memberName: member.name,
+        planName: plan?.name || 'Membership',
+        amount: await this.companyContext.formatMoney(
+          companyId,
+          session.receivedIntent,
+        ),
+        payUrl: link.shortUrl,
+      },
     });
 
     session.shareUrl = link.shortUrl;
@@ -285,9 +509,19 @@ export class CheckoutService {
     session.whatsappMode = wa.mode;
     session.whatsappSent = wa.sent;
     session.whatsappToPhone = wa.toPhone;
-    session.razorpayPaymentLinkId = link.id;
+    session.emailSent = emailResult.sent;
+    session.emailToAddress = member.email || null;
+    if (link.kind === 'auth_link') {
+      session.razorpayAuthLinkId = link.id;
+      session.mandateMaxAmount = link.mandateMaxAmount;
+      session.mandateExpireAt = link.mandateExpireAt;
+      session.mandateMethod = link.mandateMethod;
+    } else {
+      session.razorpayPaymentLinkId = link.id;
+    }
+    session.razorpayCustomerId = link.customerId || session.razorpayCustomerId;
     session.razorpayOrderId = link.orderId || session.razorpayOrderId;
-    session.expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+    session.expiresAt = expiresAt;
     session.enableAutopay = enableAutopay;
     session.status = enableAutopay
       ? CheckoutSessionStatus.MANDATE_PENDING
@@ -318,6 +552,8 @@ export class CheckoutService {
     sessionId?: string;
     orderId?: string;
     paymentLinkId?: string;
+    /** Mandate registration link id (inv_…) for autopay checkouts. */
+    authLinkId?: string;
     paymentId: string;
     tokenId?: string | null;
     customerId?: string | null;
@@ -326,6 +562,14 @@ export class CheckoutService {
     if (input.sessionId) {
       session = await this.sessionModel
         .findOne({ companyId: input.companyId, sessionId: input.sessionId })
+        .exec();
+    }
+    if (!session && input.authLinkId) {
+      session = await this.sessionModel
+        .findOne({
+          companyId: input.companyId,
+          razorpayAuthLinkId: input.authLinkId,
+        })
         .exec();
     }
     if (!session && input.paymentLinkId) {
@@ -386,9 +630,11 @@ export class CheckoutService {
         planId: plan._id,
         startDate: session.startDate,
         expiryDate: session.expiryDate,
+        cycleStartDate: session.startDate,
         subscriptionStatus: SubscriptionStatus.ACTIVE,
         planPrice: session.amount,
         totalPaid: 0,
+        lifetimePaid: 0,
         pendingAmount: session.amount,
         paymentStatus: PaymentStatus.UNPAID,
         billingMode: session.enableAutopay
@@ -404,9 +650,11 @@ export class CheckoutService {
     member.currentSubscriptionId = subscription._id as any;
     await member.save();
 
-    // Mandate
+    // Mandate — only a real token makes a subscription auto-chargeable.
     let mandate: PaymentMandateDocument | null = null;
     if (session.enableAutopay && input.tokenId) {
+      const customerId =
+        input.customerId || session.razorpayCustomerId || member.rzpCustomerId;
       mandate = await this.mandateModel.findOneAndUpdate(
         { companyId: input.companyId, tokenId: input.tokenId },
         {
@@ -414,10 +662,16 @@ export class CheckoutService {
           memberId: member._id,
           subscriptionId: subscription._id,
           tokenId: input.tokenId,
-          maxAmount: session.amount,
+          customerId: customerId || null,
+          method: session.mandateMethod || 'upi',
+          maxAmount: session.mandateMaxAmount ?? session.amount,
+          expireAt: session.mandateExpireAt || null,
+          authLinkId: session.razorpayAuthLinkId || null,
           frequency: 'as_presented',
           status: MandateStatus.ACTIVE,
           nextChargeAt: session.expiryDate,
+          lastFailureReason: null,
+          consecutiveFailures: 0,
         },
         { upsert: true, returnDocument: 'after' },
       );
@@ -425,6 +679,14 @@ export class CheckoutService {
       subscription.billingMode = BillingMode.AUTOPAY;
       await subscription.save();
       session.razorpayTokenId = input.tokenId;
+    } else if (session.enableAutopay) {
+      // Paid, but the mandate never came through: keep collecting manually
+      // instead of pretending autopay is armed.
+      subscription.billingMode = BillingMode.MANUAL;
+      await subscription.save();
+      this.logger.warn(
+        `Checkout ${session.sessionId} paid without a mandate token — subscription left on MANUAL billing`,
+      );
     }
 
     // Ledger payment (idempotent via providerRef)
@@ -510,6 +772,8 @@ export class CheckoutService {
       whatsappMode: session.whatsappMode || 'wa_me',
       whatsappSent: !!session.whatsappSent,
       whatsappToPhone: session.whatsappToPhone || null,
+      emailSent: !!session.emailSent,
+      emailToAddress: session.emailToAddress || null,
       expiresAt: session.expiresAt,
       failureReason: session.failureReason,
       subscriptionId: session.subscriptionId

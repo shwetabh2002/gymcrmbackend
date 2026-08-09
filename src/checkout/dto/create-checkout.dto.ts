@@ -1,6 +1,7 @@
 import {
   IsBoolean,
   IsDateString,
+  IsEmail,
   IsMongoId,
   IsNotEmpty,
   IsNumber,
@@ -62,6 +63,24 @@ export class CreateCheckoutDto {
   @IsOptional()
   @IsBoolean()
   enableAutopay?: boolean;
+
+  /**
+   * Send the payment / mandate link to the member on WhatsApp.
+   * Defaults to true — pass false when the member is paying at the desk.
+   */
+  @IsOptional()
+  @IsBoolean()
+  sendWhatsApp?: boolean;
+
+  /** Email the same link. Defaults to true, needs a member email to do anything. */
+  @IsOptional()
+  @IsBoolean()
+  sendEmail?: boolean;
+
+  /** Optional member email — required for the email option to work. */
+  @IsOptional()
+  @IsEmail()
+  email?: string;
 
   @IsOptional()
   @IsString()

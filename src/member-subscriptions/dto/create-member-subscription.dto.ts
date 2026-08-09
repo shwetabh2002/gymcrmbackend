@@ -1,4 +1,5 @@
 import {
+  IsIn,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -9,6 +10,7 @@ import {
   Min,
 } from 'class-validator';
 import { PaymentMode } from '../../common/enums/payment-mode.enum';
+import { ACTIVE_PAYMENT_MODES } from '../../config/payment-modes.config';
 
 export class CreateMemberSubscriptionDto {
   @IsMongoId()
@@ -33,7 +35,8 @@ export class CreateMemberSubscriptionDto {
   @IsOptional()
   expiryDate?: string;
 
-  @IsEnum(PaymentMode)
+  /** Cash or Online — the manual-fill collection modes. */
+  @IsIn(ACTIVE_PAYMENT_MODES)
   @IsOptional()
   paymentMode?: PaymentMode;
 

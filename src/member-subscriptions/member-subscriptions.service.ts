@@ -28,6 +28,7 @@ import {
   ActivityActor,
 } from '../activity-logs/activity-logs.service';
 import { PaymentsService } from '../payments/payments.service';
+import { CompanyContextService } from '../common/company-context/company-context.service';
 
 type LocScope = { locationId?: string };
 
@@ -42,6 +43,7 @@ export class MemberSubscriptionsService {
     private activityLogsService: ActivityLogsService,
     @Inject(forwardRef(() => PaymentsService))
     private paymentsService: PaymentsService,
+    private companyContext: CompanyContextService,
   ) {}
 
   async create(
@@ -64,8 +66,7 @@ export class MemberSubscriptionsService {
     }
 
     const locationId =
-      (member.locationId ? String(member.locationId) : null) ||
-      writeLocationId;
+      (member.locationId ? String(member.locationId) : null) || writeLocationId;
     if (!locationId) {
       throw new BadRequestException(
         'locationId required — member has no location and none was provided',
@@ -101,29 +102,21 @@ export class MemberSubscriptionsService {
     }
 
     const startDate = new Date(createDto.startDate);
-    let expiryDate: Date;
-
-    if (createDto.expiryDate) {
-      expiryDate = new Date(createDto.expiryDate);
-    } else {
-      expiryDate = new Date(startDate);
-      switch (plan.durationType) {
-        case 'DAYS':
-          expiryDate.setDate(expiryDate.getDate() + plan.duration);
-          break;
-        case 'MONTHS':
-          expiryDate.setMonth(expiryDate.getMonth() + plan.duration);
-          break;
-        case 'YEARS':
-          expiryDate.setFullYear(expiryDate.getFullYear() + plan.duration);
-          break;
-      }
-    }
+    const expiryDate = createDto.expiryDate
+      ? new Date(createDto.expiryDate)
+      : MemberSubscriptionsService.addPlanDuration(
+          startDate,
+          plan.duration,
+          plan.durationType,
+        );
 
     const initialPayment = createDto.initialPayment || 0;
     if (initialPayment > plan.price) {
       throw new BadRequestException(
-        `Initial payment cannot exceed plan price ₹${plan.price}`,
+        `Initial payment cannot exceed plan price ${await this.companyContext.formatMoney(
+          companyId,
+          plan.price,
+        )}`,
       );
     }
 
@@ -334,8 +327,11 @@ export class MemberSubscriptionsService {
       }
     }
 
-    const { companyId: _ignore, locationId: _loc, ...safeUpdate } =
-      updateDto as any;
+    const {
+      companyId: _ignore,
+      locationId: _loc,
+      ...safeUpdate
+    } = updateDto as any;
 
     const updatedSubscription = await this.memberSubscriptionModel
       .findOneAndUpdate({ _id: id, companyId }, safeUpdate, {
@@ -394,10 +390,7 @@ export class MemberSubscriptionsService {
         userType: UserType.MEMBER,
       })
       .exec();
-    if (
-      member &&
-      member.currentSubscriptionId?.toString() === id.toString()
-    ) {
+    if (member && member.currentSubscriptionId?.toString() === id.toString()) {
       await this.userModel
         .findOneAndUpdate(
           { _id: subscription.memberId, companyId },
@@ -450,6 +443,80 @@ export class MemberSubscriptionsService {
   }
 
   /**
+   * Advance `from` by a plan's own duration. Used by renewals so a quarterly or
+   * yearly plan is not silently treated as monthly.
+   */
+  static addPlanDuration(
+    from: Date,
+    duration: number,
+    durationType: string,
+  ): Date {
+    const next = new Date(from);
+    const units = Number(duration) > 0 ? Number(duration) : 1;
+    switch (durationType) {
+      case 'DAYS':
+        next.setDate(next.getDate() + units);
+        break;
+      case 'YEARS':
+        next.setFullYear(next.getFullYear() + units);
+        break;
+      case 'MONTHS':
+      default:
+        next.setMonth(next.getMonth() + units);
+        break;
+    }
+    return next;
+  }
+
+  /**
+   * Roll a subscription into its next billing cycle: fresh price snapshot,
+   * cycle totals zeroed, expiry extended by the plan's real duration.
+   * The caller records the renewal payment afterwards via applyPaymentDelta.
+   */
+  async startNewCycle(
+    companyId: string,
+    subscriptionId: string,
+  ): Promise<MemberSubscriptionDocument> {
+    const sub = await this.memberSubscriptionModel
+      .findOne({ _id: subscriptionId, companyId })
+      .exec();
+    if (!sub) {
+      throw new NotFoundException(
+        `Member subscription with ID ${subscriptionId} not found`,
+      );
+    }
+
+    const plan = await this.subscriptionPlanModel
+      .findOne({ _id: sub.planId, companyId })
+      .exec();
+
+    const cycleStart = new Date(Math.max(sub.expiryDate.getTime(), Date.now()));
+    const nextExpiry = plan
+      ? MemberSubscriptionsService.addPlanDuration(
+          cycleStart,
+          plan.duration,
+          plan.durationType,
+        )
+      : MemberSubscriptionsService.addPlanDuration(cycleStart, 1, 'MONTHS');
+
+    // Re-snapshot the price so a plan price change applies from this cycle on.
+    const cyclePrice = plan ? plan.price : sub.planPrice;
+
+    sub.planPrice = cyclePrice;
+    sub.totalPaid = 0;
+    sub.pendingAmount = cyclePrice;
+    sub.paymentStatus = PaymentStatus.UNPAID;
+    sub.cycleStartDate = cycleStart;
+    sub.expiryDate = nextExpiry;
+    sub.subscriptionStatus = SubscriptionStatus.ACTIVE;
+    sub.renewalCount = (sub.renewalCount || 0) + 1;
+    sub.lastRenewedAt = new Date();
+    await sub.save();
+
+    return sub;
+  }
+
+  /**
    * Atomically adjust paid/pending totals by `delta`.
    * Uses the MongoDB driver pipeline update (not mongoose Model.findOneAndUpdate),
    * which avoids mongoose 9's updatePipeline gate while staying race-safe.
@@ -462,64 +529,81 @@ export class MemberSubscriptionsService {
     const _id = new Types.ObjectId(subscriptionId);
     const companyOid = new Types.ObjectId(companyId);
 
-    const result = await this.memberSubscriptionModel.collection.findOneAndUpdate(
-      { _id, companyId: companyOid },
-      [
-        {
-          $set: {
-            totalPaid: {
-              $max: [0, { $add: [{ $ifNull: ['$totalPaid', 0] }, delta] }],
-            },
-          },
-        },
-        {
-          $set: {
-            pendingAmount: {
-              $max: [
-                0,
-                {
-                  $subtract: [
-                    { $ifNull: ['$planPrice', 0] },
-                    '$totalPaid',
-                  ],
-                },
-              ],
-            },
-            paymentStatus: {
-              $switch: {
-                branches: [
+    const result =
+      await this.memberSubscriptionModel.collection.findOneAndUpdate(
+        { _id, companyId: companyOid },
+        [
+          {
+            $set: {
+              totalPaid: {
+                $max: [0, { $add: [{ $ifNull: ['$totalPaid', 0] }, delta] }],
+              },
+              // Cycle-independent running total — never reset by a renewal.
+              lifetimePaid: {
+                $max: [
+                  0,
                   {
-                    case: {
-                      $lte: [
-                        {
-                          $subtract: [
-                            { $ifNull: ['$planPrice', 0] },
-                            '$totalPaid',
-                          ],
-                        },
-                        0,
-                      ],
-                    },
-                    then: PaymentStatus.FULLY_PAID,
-                  },
-                  {
-                    case: { $gt: ['$totalPaid', 0] },
-                    then: PaymentStatus.PARTIALLY_PAID,
+                    $add: [
+                      {
+                        $ifNull: [
+                          '$lifetimePaid',
+                          { $ifNull: ['$totalPaid', 0] },
+                        ],
+                      },
+                      delta,
+                    ],
                   },
                 ],
-                default: PaymentStatus.UNPAID,
               },
             },
-            updatedAt: new Date(),
           },
-        },
-      ],
-      { returnDocument: 'after' },
-    );
+          {
+            $set: {
+              pendingAmount: {
+                $max: [
+                  0,
+                  {
+                    $subtract: [{ $ifNull: ['$planPrice', 0] }, '$totalPaid'],
+                  },
+                ],
+              },
+              paymentStatus: {
+                $switch: {
+                  branches: [
+                    {
+                      case: {
+                        $lte: [
+                          {
+                            $subtract: [
+                              { $ifNull: ['$planPrice', 0] },
+                              '$totalPaid',
+                            ],
+                          },
+                          0,
+                        ],
+                      },
+                      then: PaymentStatus.FULLY_PAID,
+                    },
+                    {
+                      case: { $gt: ['$totalPaid', 0] },
+                      then: PaymentStatus.PARTIALLY_PAID,
+                    },
+                  ],
+                  default: PaymentStatus.UNPAID,
+                },
+              },
+              updatedAt: new Date(),
+            },
+          },
+        ],
+        { returnDocument: 'after' },
+      );
 
     // Driver return shape varies by version: document | { value: document }
     const doc = (result as any)?.value ?? result;
     if (!doc) return null;
-    return this.memberSubscriptionModel.hydrate(doc) as MemberSubscriptionDocument;
+    return this.memberSubscriptionModel.hydrate(
+      doc,
+    ) as MemberSubscriptionDocument;
   }
 }

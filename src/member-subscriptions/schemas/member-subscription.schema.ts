@@ -90,6 +90,25 @@ export class MemberSubscription {
   @Prop({ type: String, default: 'MANUAL' })
   billingMode: string;
 
+  /**
+   * totalPaid / pendingAmount describe the CURRENT billing cycle only.
+   * An autopay renewal starts a fresh cycle instead of piling onto the old
+   * totals, so `pendingAmount` stays a truthful "kitna baaki hai".
+   * Lifetime money always comes from the payments ledger, never from here.
+   */
+  @Prop({ type: Number, default: 0 })
+  renewalCount: number;
+
+  @Prop({ type: Date, default: null })
+  cycleStartDate: Date | null;
+
+  @Prop({ type: Date, default: null })
+  lastRenewedAt: Date | null;
+
+  /** Sum of every payment ever applied, across all cycles. */
+  @Prop({ type: Number, default: 0 })
+  lifetimePaid: number;
+
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'PaymentMandate',
@@ -100,3 +119,21 @@ export class MemberSubscription {
 
 export const MemberSubscriptionSchema =
   SchemaFactory.createForClass(MemberSubscription);
+
+/**
+ * The autopay sweep filters on billingMode + status + mandateId and then on
+ * expiry / pending. Without this the sweep scans the whole collection, which
+ * only gets worse as gyms are added.
+ */
+MemberSubscriptionSchema.index({
+  billingMode: 1,
+  subscriptionStatus: 1,
+  mandateId: 1,
+  expiryDate: 1,
+});
+
+/** Renewal queue and dashboard both slice by company + expiry window. */
+MemberSubscriptionSchema.index({ companyId: 1, expiryDate: 1 });
+
+/** Per-member subscription history. */
+MemberSubscriptionSchema.index({ companyId: 1, memberId: 1, createdAt: -1 });

@@ -30,14 +30,35 @@ export class PaymentMandate {
   })
   subscriptionId: Types.ObjectId | null;
 
-  @Prop({ type: String, enum: PaymentProvider, default: PaymentProvider.RAZORPAY })
+  @Prop({
+    type: String,
+    enum: PaymentProvider,
+    default: PaymentProvider.RAZORPAY,
+  })
   provider: PaymentProvider;
 
   @Prop({ type: String, required: true, index: true })
   tokenId: string;
 
+  /** Razorpay customer the token hangs off — required to charge it. */
+  @Prop({ type: String, default: null })
+  customerId: string | null;
+
+  /** upi | emandate | card | nach */
+  @Prop({ type: String, default: 'upi' })
+  method: string;
+
+  /** Ceiling per debit agreed by the member (₹, not paise). */
   @Prop({ type: Number, default: null })
   maxAmount: number | null;
+
+  /** Mandate validity — after this Razorpay refuses further debits. */
+  @Prop({ type: Date, default: null })
+  expireAt: Date | null;
+
+  /** Registration link (inv_…) this mandate was created from. */
+  @Prop({ type: String, default: null })
+  authLinkId: string | null;
 
   @Prop({ type: String, default: 'as_presented' })
   frequency: string;
@@ -58,6 +79,22 @@ export class PaymentMandate {
 
   @Prop({ type: String, default: null })
   lastFailureReason: string | null;
+
+  /**
+   * Charge Razorpay accepted but has not confirmed yet. The payment.captured /
+   * payment.failed webhook clears this; until then the worker will not retry.
+   */
+  @Prop({ type: String, default: null, index: true })
+  pendingPaymentId: string | null;
+
+  @Prop({ type: Number, default: null })
+  pendingAmount: number | null;
+
+  @Prop({ type: Date, default: null })
+  pendingSince: Date | null;
+
+  @Prop({ type: Number, default: 0 })
+  consecutiveFailures: number;
 }
 
 export const PaymentMandateSchema =
