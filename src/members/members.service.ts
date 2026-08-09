@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ConflictException,
   BadRequestException,
@@ -38,11 +39,22 @@ import { CompanyContextService } from '../common/company-context/company-context
 import { EmailTemplatesService } from '../email/email-templates.service';
 import { EMAIL_TYPES } from '../config/email-templates.config';
 import { toIsoDate } from '../config/time.constants';
+import {
+  MemberListQueryDto,
+  PaginationQueryDto,
+  UNPAGED_SAFETY_LIMIT,
+  buildResult,
+  isPaged,
+  resolvePaging,
+  searchRegex,
+} from '../common/pagination/pagination';
 
 type LocScope = { locationId?: string };
 
 @Injectable()
 export class MembersService {
+  private readonly logger = new Logger(MembersService.name);
+
   constructor(
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
@@ -341,21 +353,82 @@ export class MembersService {
     return null;
   }
 
-  async findAll(companyId: string, locScope: LocScope = {}) {
-    const members = await this.userModel
-      .find({ companyId, userType: UserType.MEMBER, ...locScope })
-      .select('-password -refreshToken')
-      .populate({
-        path: 'currentSubscriptionId',
-        strictPopulate: false,
-        populate: { path: 'planId', strictPopulate: false },
-      })
-      .populate({ path: 'trainerId', strictPopulate: false })
-      .populate({ path: 'salesPersonId', strictPopulate: false })
-      .sort({ createdAt: -1 })
-      .exec();
+  async findAll(
+    companyId: string,
+    locScope: LocScope = {},
+    query?: MemberListQueryDto,
+  ) {
+    const filter: Record<string, unknown> = {
+      companyId,
+      userType: UserType.MEMBER,
+      ...locScope,
+    };
 
-    return members.map((m) => this.toClientMember(m));
+    if (query?.status && query.status !== 'ALL') {
+      filter.memberStatus = query.status;
+    }
+    if (query?.trainingType && query.trainingType !== 'ALL') {
+      filter.trainingType = query.trainingType;
+    }
+
+    // Searching in the database instead of shipping every member to the browser
+    // to filter there.
+    const term = searchRegex(query?.search);
+    if (term) {
+      filter.$or = [
+        { name: term },
+        { phone: term },
+        { email: term },
+        { idNo: term },
+      ];
+    }
+
+    const listQuery = () =>
+      this.userModel
+        .find(filter)
+        .select('-password -refreshToken')
+        .populate({
+          path: 'currentSubscriptionId',
+          strictPopulate: false,
+          populate: {
+            path: 'planId',
+            strictPopulate: false,
+            select: 'name price',
+          },
+        })
+        .populate({ path: 'trainerId', strictPopulate: false, select: 'name' })
+        .populate({
+          path: 'salesPersonId',
+          strictPopulate: false,
+          select: 'name',
+        })
+        .sort({ createdAt: -1 });
+
+    if (!isPaged(query)) {
+      const rows = await listQuery()
+        .limit(UNPAGED_SAFETY_LIMIT + 1)
+        .exec();
+      if (rows.length > UNPAGED_SAFETY_LIMIT) {
+        this.logger.warn(
+          `Unpaged members list for company ${companyId} exceeded ${UNPAGED_SAFETY_LIMIT} rows — the caller should page`,
+        );
+        return rows
+          .slice(0, UNPAGED_SAFETY_LIMIT)
+          .map((m) => this.toClientMember(m));
+      }
+      return rows.map((m) => this.toClientMember(m));
+    }
+
+    const { skip, limit } = resolvePaging(query);
+    const [rows, total] = await Promise.all([
+      listQuery().skip(skip).limit(limit).exec(),
+      this.userModel.countDocuments(filter).exec(),
+    ]);
+    return buildResult(
+      rows.map((m) => this.toClientMember(m)),
+      total,
+      query,
+    );
   }
 
   async findById(companyId: string, id: string, locScope: LocScope = {}) {

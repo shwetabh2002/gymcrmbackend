@@ -80,3 +80,20 @@ export class Payment {
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
+
+/**
+ * The payments list is always company-scoped and newest-first. Without the
+ * sort key in the index Mongo pulls every match into memory to order it, which
+ * stops working entirely once a gym passes a few thousand payments.
+ */
+PaymentSchema.index({ companyId: 1, createdAt: -1 });
+
+/** Member and subscription ledgers — both are opened constantly. */
+PaymentSchema.index({ companyId: 1, memberId: 1, createdAt: -1 });
+PaymentSchema.index({ companyId: 1, subscriptionId: 1, createdAt: -1 });
+
+/** Idempotency lookup on every provider callback. */
+PaymentSchema.index({ companyId: 1, providerRef: 1 });
+
+/** Revenue aggregations slice by date within a company. */
+PaymentSchema.index({ companyId: 1, paymentDate: -1 });

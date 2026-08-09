@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Put,
   Delete,
   Body,
@@ -27,6 +28,7 @@ import { CompanyId } from '../common/tenant/company-id.decorator';
 import { LocationScope } from '../common/tenant/location.decorator';
 import { getUploadLimits } from '../config/upload.config';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
+import { PaginationQueryDto } from '../common/pagination/pagination';
 
 @Controller('payments')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -80,8 +82,9 @@ export class PaymentsController {
   async findAll(
     @CompanyId() companyId: string,
     @LocationScope() locScope: { locationId?: string },
+    @Query() query: PaginationQueryDto,
   ) {
-    return this.paymentsService.findAll(companyId, locScope);
+    return this.paymentsService.findAll(companyId, locScope, query);
   }
 
   @Get('member/:memberId')

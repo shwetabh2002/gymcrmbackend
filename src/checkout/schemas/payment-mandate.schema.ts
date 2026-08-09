@@ -100,3 +100,6 @@ export class PaymentMandate {
 export const PaymentMandateSchema =
   SchemaFactory.createForClass(PaymentMandate);
 PaymentMandateSchema.index({ companyId: 1, memberId: 1 });
+
+/** Mandate for a subscription — read on every charge and every CRM badge. */
+PaymentMandateSchema.index({ companyId: 1, subscriptionId: 1 });

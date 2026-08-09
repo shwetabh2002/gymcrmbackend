@@ -174,3 +174,9 @@ UserSchema.index(
     },
   },
 );
+
+/** Member list: company + type, newest first — keeps the sort out of memory. */
+UserSchema.index({ companyId: 1, userType: 1, createdAt: -1 });
+
+/** Branch-scoped member lists. */
+UserSchema.index({ companyId: 1, locationId: 1, userType: 1, createdAt: -1 });

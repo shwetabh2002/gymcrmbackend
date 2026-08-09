@@ -18,7 +18,10 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { BillingMode, MandateStatus } from '../common/enums/billing.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PaymentProviderService } from '../payment-provider/payment-provider.service';
-import { RazorpayApiService } from '../payment-provider/razorpay-api.service';
+import {
+  RazorpayApiService,
+  RazorpayCredentials,
+} from '../payment-provider/razorpay-api.service';
 import { ConfigService } from '@nestjs/config';
 import { GymSettingsService } from '../gym-settings/gym-settings.service';
 import { RuntimeService } from '../common/runtime/runtime.service';
@@ -88,6 +91,36 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
    * One sweep over everything an active mandate owes.
    * Also callable from POST /autopay/run for a manual run.
    */
+  /**
+   * Per-company values resolved once per sweep.
+   *
+   * Settings and provider credentials belong to the gym, not the subscription,
+   * but the loop is per subscription — without this every due row re-read the
+   * settings document and re-decrypted (and possibly refreshed) the gym's
+   * Razorpay tokens.
+   */
+  private companyCache(): {
+    autopayEnabled: (companyId: string) => Promise<boolean>;
+    credentials: (companyId: string) => Promise<RazorpayCredentials>;
+  } {
+    const enabled = new Map<string, Promise<boolean>>();
+    const creds = new Map<string, Promise<RazorpayCredentials>>();
+    return {
+      autopayEnabled: (companyId) => {
+        if (!enabled.has(companyId)) {
+          enabled.set(companyId, this.gymSettings.isAutopayEnabled(companyId));
+        }
+        return enabled.get(companyId)!;
+      },
+      credentials: (companyId) => {
+        if (!creds.has(companyId)) {
+          creds.set(companyId, this.paymentProvider.getCredentials(companyId));
+        }
+        return creds.get(companyId)!;
+      },
+    };
+  }
+
   async processDueCharges(
     companyScope?: string,
   ): Promise<AutopayRunSummary & { alreadyRunning?: boolean }> {
@@ -103,6 +136,7 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
     }
     this.running = true;
     const now = new Date();
+    const perCompany = this.companyCache();
     const summary: AutopayRunSummary = {
       charged: 0,
       pending: 0,
@@ -148,11 +182,11 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
         for (const sub of due) {
           try {
             const companyId = String(sub.companyId);
-            if (!(await this.gymSettings.isAutopayEnabled(companyId))) {
+            if (!(await perCompany.autopayEnabled(companyId))) {
               this.note(summary, 'gym autopay is off');
               continue;
             }
-            const outcome = await this.chargeOne(sub, now);
+            const outcome = await this.chargeOne(sub, now, perCompany);
             if (outcome === 'charged') summary.charged += 1;
             else if (outcome === 'pending') summary.pending += 1;
             else if (outcome === 'failed') summary.failed += 1;
@@ -196,6 +230,7 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
   private async chargeOne(
     sub: MemberSubscriptionDocument,
     now: Date,
+    perCompany: ReturnType<AutopayWorkerService['companyCache']>,
   ): Promise<'charged' | 'pending' | 'failed' | { reason: string }> {
     const companyId = String(sub.companyId);
 
@@ -241,7 +276,7 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
       await mandate.save();
     }
 
-    const creds = await this.paymentProvider.getCredentials(companyId);
+    const creds = await perCompany.credentials(companyId);
 
     let result: { paymentId: string; orderId: string; status: string };
     try {

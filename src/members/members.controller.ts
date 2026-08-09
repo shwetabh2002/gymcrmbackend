@@ -1,5 +1,6 @@
 import {
   Controller,
+  Query,
   Get,
   Post,
   Put,
@@ -29,6 +30,7 @@ import {
   WriteLocationId,
 } from '../common/tenant/location.decorator';
 import { getUploadLimits } from '../config/upload.config';
+import { MemberListQueryDto } from '../common/pagination/pagination';
 
 function actorFromReq(req: any) {
   return req?.user
@@ -65,8 +67,9 @@ export class MembersController {
   async findAll(
     @CompanyId() companyId: string,
     @LocationScope() locScope: { locationId?: string },
+    @Query() query: MemberListQueryDto,
   ) {
-    return this.membersService.findAll(companyId, locScope);
+    return this.membersService.findAll(companyId, locScope, query);
   }
 
   @Get(':id')

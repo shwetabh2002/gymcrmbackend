@@ -102,3 +102,9 @@ export const InvoiceSchema = SchemaFactory.createForClass(Invoice);
 InvoiceSchema.index({ companyId: 1, invoiceNumber: 1 }, { unique: true });
 InvoiceSchema.index({ companyId: 1, createdAt: -1 });
 
+/** Member and subscription invoice history. */
+InvoiceSchema.index({ companyId: 1, memberId: 1, createdAt: -1 });
+InvoiceSchema.index({ companyId: 1, subscriptionId: 1, createdAt: -1 });
+
+/** Invoice raised from a payment — looked up on every void and receipt. */
+InvoiceSchema.index({ companyId: 1, paymentId: 1 });

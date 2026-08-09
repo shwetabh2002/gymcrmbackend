@@ -31,6 +31,14 @@ import {
   isInvoiceTaxMode,
 } from './tax.util';
 import { CompanyContextService } from '../common/company-context/company-context.service';
+import {
+  PaginationQueryDto,
+  UNPAGED_SAFETY_LIMIT,
+  buildResult,
+  isPaged,
+  resolvePaging,
+  searchRegex,
+} from '../common/pagination/pagination';
 
 type LocScope = { locationId?: string };
 
@@ -244,7 +252,8 @@ export class InvoicesService {
     return this.applyInvoicePopulates(
       this.invoiceModel
         .find({ companyId, deletedAt: null, ...locScope })
-        .sort({ createdAt: -1 }),
+        .sort({ createdAt: -1 })
+        .limit(UNPAGED_SAFETY_LIMIT),
     ).exec();
   }
 

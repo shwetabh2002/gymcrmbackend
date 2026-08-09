@@ -37,6 +37,16 @@ import {
 } from '../invoices/tax.util';
 import { StorageService } from '../storage/storage.service';
 import { PaymentMode } from '../common/enums/payment-mode.enum';
+import {
+  MAX_PAGE_SIZE,
+  PaginatedResult,
+  PaginationQueryDto,
+  UNPAGED_SAFETY_LIMIT,
+  buildResult,
+  isPaged,
+  resolvePaging,
+  searchRegex,
+} from '../common/pagination/pagination';
 import { CompanyContextService } from '../common/company-context/company-context.service';
 import { EmailTemplatesService } from '../email/email-templates.service';
 import { EMAIL_TYPES } from '../config/email-templates.config';
@@ -446,14 +456,59 @@ export class PaymentsService {
   async findAll(
     companyId: string,
     locScope: LocScope = {},
-  ): Promise<PaymentDocument[]> {
-    return this.paymentModel
-      .find({ companyId, deletedAt: null, ...locScope })
-      .populate('subscriptionId')
-      .populate('memberId', '-password -refreshToken')
-      .populate('receivedBy', '-password -refreshToken')
-      .sort({ createdAt: -1 })
-      .exec();
+    query?: PaginationQueryDto,
+  ): Promise<PaymentDocument[] | PaginatedResult<PaymentDocument>> {
+    const filter: Record<string, unknown> = {
+      companyId,
+      deletedAt: null,
+      ...locScope,
+    };
+
+    // Search resolves member names first, then filters payments by those ids —
+    // one extra indexed query instead of loading every payment to filter in JS.
+    const term = searchRegex(query?.search);
+    if (term) {
+      const memberIds = await this.userModel
+        .find({ companyId, userType: UserType.MEMBER, name: term })
+        .select('_id')
+        .limit(MAX_PAGE_SIZE * 5)
+        .lean()
+        .exec();
+      filter.$or = [
+        { memberId: { $in: memberIds.map((m) => m._id) } },
+        { transactionId: term },
+      ];
+    }
+
+    // Only the fields the list actually renders — a full populate pulled entire
+    // member and subscription documents for every row.
+    const listQuery = () =>
+      this.paymentModel
+        .find(filter)
+        .populate('subscriptionId', 'planPrice paymentStatus expiryDate')
+        .populate('memberId', 'name phone email idNo')
+        .populate('receivedBy', 'name')
+        .sort({ createdAt: -1 });
+
+    if (!isPaged(query)) {
+      const rows = await listQuery()
+        .limit(UNPAGED_SAFETY_LIMIT + 1)
+        .exec();
+      if (rows.length > UNPAGED_SAFETY_LIMIT) {
+        this.logger.warn(
+          `Unpaged payments list for company ${companyId} exceeded ${UNPAGED_SAFETY_LIMIT} rows — the caller should page`,
+        );
+        return rows.slice(0, UNPAGED_SAFETY_LIMIT);
+      }
+      return rows;
+    }
+
+    const { skip, limit } = resolvePaging(query);
+    const [items, total] = await Promise.all([
+      listQuery().skip(skip).limit(limit).exec(),
+      this.paymentModel.countDocuments(filter).exec(),
+    ]);
+    return buildResult(items, total, query);
   }
 
   async findById(

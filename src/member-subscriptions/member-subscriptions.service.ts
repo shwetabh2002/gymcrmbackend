@@ -29,6 +29,14 @@ import {
 } from '../activity-logs/activity-logs.service';
 import { PaymentsService } from '../payments/payments.service';
 import { CompanyContextService } from '../common/company-context/company-context.service';
+import {
+  PaginationQueryDto,
+  UNPAGED_SAFETY_LIMIT,
+  buildResult,
+  isPaged,
+  resolvePaging,
+  searchRegex,
+} from '../common/pagination/pagination';
 
 type LocScope = { locationId?: string };
 
@@ -241,10 +249,14 @@ export class MemberSubscriptionsService {
     companyId: string,
     locScope: LocScope = {},
   ): Promise<MemberSubscriptionDocument[]> {
+    // Only what the list renders, newest first, and never the whole company at
+    // once — an unbounded populate here grew with every member ever added.
     return this.memberSubscriptionModel
       .find({ companyId, ...locScope })
-      .populate('memberId', '-password -refreshToken')
-      .populate('planId')
+      .populate('memberId', 'name phone email idNo')
+      .populate('planId', 'name price duration durationType')
+      .sort({ createdAt: -1 })
+      .limit(UNPAGED_SAFETY_LIMIT)
       .exec();
   }
 
