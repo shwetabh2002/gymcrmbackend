@@ -28,9 +28,11 @@ import { RuntimeService } from '../common/runtime/runtime.service';
 import { MandatesService } from './mandates.service';
 import {
   AUTOPAY_BATCH_SIZE,
+  AUTOPAY_LOCK_KEY,
   AUTOPAY_MAX_ROUNDS,
   DEFAULT_AUTOPAY_INTERVAL_MS,
 } from '../config/autopay.config';
+import { JobLockService } from '../common/locks/job-lock.service';
 import {
   RAZORPAY_PAYMENT_STATUS,
   toMinorUnits,
@@ -52,7 +54,6 @@ export type AutopayRunSummary = {
 @Injectable()
 export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AutopayWorkerService.name);
-  private running = false;
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
@@ -67,6 +68,7 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
     private gymSettings: GymSettingsService,
     private mandates: MandatesService,
     private runtime: RuntimeService,
+    private jobLock: JobLockService,
   ) {}
 
   onModuleInit() {
@@ -124,7 +126,20 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
   async processDueCharges(
     companyScope?: string,
   ): Promise<AutopayRunSummary & { alreadyRunning?: boolean }> {
-    if (this.running) {
+    /**
+     * One sweep at a time across the whole deployment, not just this process.
+     * A manual run for a single gym is scoped to its own key so it is not
+     * blocked by the platform-wide sweep, and vice versa.
+     */
+    const lockKey = companyScope
+      ? `${AUTOPAY_LOCK_KEY}:${companyScope}`
+      : AUTOPAY_LOCK_KEY;
+
+    const result = await this.jobLock.runExclusively(lockKey, () =>
+      this.sweep(companyScope),
+    );
+
+    if (result === null) {
       return {
         charged: 0,
         pending: 0,
@@ -134,7 +149,10 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
         alreadyRunning: true,
       };
     }
-    this.running = true;
+    return result;
+  }
+
+  private async sweep(companyScope?: string): Promise<AutopayRunSummary> {
     const now = new Date();
     const perCompany = this.companyCache();
     const summary: AutopayRunSummary = {
@@ -217,7 +235,7 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
       );
       return summary;
     } finally {
-      this.running = false;
+      // The lease is released by JobLockService.
     }
   }
 

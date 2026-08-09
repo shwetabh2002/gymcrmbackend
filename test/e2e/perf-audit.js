@@ -224,6 +224,30 @@ async function main() {
     `${subsUnpaged.body.length} rows, ${subsUnpaged.ms}ms`,
   );
 
+  const subsPaged = await api('GET', '/member-subscriptions?page=1&limit=25');
+  check('subscriptions paged', subsPaged.body.items?.length, 25);
+  check('subscriptions total', subsPaged.body.total, SEED_MEMBERS);
+  checkTrue('subscriptions page is fast', subsPaged.ms < 1500, `${subsPaged.ms}ms`);
+
+  const subsFiltered = await api(
+    'GET',
+    '/member-subscriptions?limit=25&status=ACTIVE',
+  );
+  checkTrue(
+    'subscription status filter runs in the query',
+    subsFiltered.body.total === SEED_MEMBERS,
+    `total=${subsFiltered.body.total}`,
+  );
+
+  const payByMode = await api('GET', '/payments?limit=25&mode=CASH');
+  checkTrue(
+    'payment mode filter runs in the query',
+    payByMode.body.total === SEED_MEMBERS,
+    `total=${payByMode.body.total}`,
+  );
+  const payByModeNone = await api('GET', '/payments?limit=25&mode=ONLINE');
+  check('mode filter excludes non-matching', payByModeNone.body.total, 0);
+
   // ── Dashboard under load ──
   console.log('\n=== 4. DASHBOARD with a full gym ===');
   const dash = await api('GET', '/analytics/dashboard');

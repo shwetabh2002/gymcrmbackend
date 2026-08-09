@@ -40,7 +40,7 @@ import { PaymentMode } from '../common/enums/payment-mode.enum';
 import {
   MAX_PAGE_SIZE,
   PaginatedResult,
-  PaginationQueryDto,
+  PaymentListQueryDto,
   UNPAGED_SAFETY_LIMIT,
   buildResult,
   isPaged,
@@ -456,13 +456,17 @@ export class PaymentsService {
   async findAll(
     companyId: string,
     locScope: LocScope = {},
-    query?: PaginationQueryDto,
+    query?: PaymentListQueryDto,
   ): Promise<PaymentDocument[] | PaginatedResult<PaymentDocument>> {
     const filter: Record<string, unknown> = {
       companyId,
       deletedAt: null,
       ...locScope,
     };
+
+    if (query?.mode && query.mode !== 'ALL') {
+      filter.paymentMode = query.mode;
+    }
 
     // Search resolves member names first, then filters payments by those ids —
     // one extra indexed query instead of loading every payment to filter in JS.

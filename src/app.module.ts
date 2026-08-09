@@ -27,6 +27,7 @@ import { AutopayModule } from './autopay/autopay.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 import { RuntimeModule } from './common/runtime/runtime.module';
 import { CompanyContextModule } from './common/company-context/company-context.module';
+import { JobLockModule } from './common/locks/job-lock.module';
 import { GLOBAL_THROTTLE } from './config/throttle.config';
 
 @Module({
@@ -37,6 +38,7 @@ import { GLOBAL_THROTTLE } from './config/throttle.config';
     }),
     RuntimeModule,
     CompanyContextModule,
+    JobLockModule,
     EmailModule,
     WhatsAppModule,
     MongooseModule.forRootAsync({

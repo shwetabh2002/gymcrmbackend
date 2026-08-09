@@ -21,7 +21,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "audit": "node test/e2e/audit.js",
     "audit:invoice": "node test/e2e/invoice-audit.js",
-    "audit:perf": "node test/e2e/perf-audit.js"
+    "audit:perf": "node test/e2e/perf-audit.js",
+    "audit:lock": "node test/e2e/lock-audit.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1101.0",

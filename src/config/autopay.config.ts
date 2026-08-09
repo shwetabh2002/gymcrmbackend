@@ -43,3 +43,6 @@ export const DEFAULT_MANDATE_VALIDITY_MONTHS = 60;
 /** Bounds accepted from the API for those per-gym settings. */
 export const MANDATE_MULTIPLIER_RANGE = { min: 1, max: 10 } as const;
 export const MANDATE_VALIDITY_MONTHS_RANGE = { min: 1, max: 120 } as const;
+
+/** Lease key so only one instance sweeps at a time. */
+export const AUTOPAY_LOCK_KEY = 'autopay-sweep';

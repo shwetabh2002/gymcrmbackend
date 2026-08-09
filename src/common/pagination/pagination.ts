@@ -59,6 +59,22 @@ export class MemberListQueryDto extends PaginationQueryDto {
   trainingType?: string;
 }
 
+/** Payments list filters. */
+export class PaymentListQueryDto extends PaginationQueryDto {
+  /** CASH | ONLINE, or a legacy value on historical rows */
+  @IsOptional()
+  @IsString()
+  mode?: string;
+}
+
+/** Subscriptions list filters. */
+export class SubscriptionListQueryDto extends PaginationQueryDto {
+  /** ACTIVE | EXPIRING_SOON | EXPIRED | CANCELLED */
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
+
 export type PaginatedResult<T> = {
   items: T[];
   total: number;

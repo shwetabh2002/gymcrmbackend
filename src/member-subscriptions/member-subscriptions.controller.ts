@@ -1,5 +1,6 @@
 import {
   Controller,
+  Query,
   Get,
   Post,
   Put,
@@ -20,6 +21,7 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { LocationScope } from '../common/tenant/location.decorator';
+import { SubscriptionListQueryDto } from '../common/pagination/pagination';
 
 @Controller('member-subscriptions')
 @UseGuards(JwtAuthGuard, PermissionsGuard)
@@ -55,8 +57,9 @@ export class MemberSubscriptionsController {
   async findAll(
     @CompanyId() companyId: string,
     @LocationScope() locScope: { locationId?: string },
+    @Query() query: SubscriptionListQueryDto,
   ) {
-    return this.memberSubscriptionsService.findAll(companyId, locScope);
+    return this.memberSubscriptionsService.findAll(companyId, locScope, query);
   }
 
   @Get(':id')

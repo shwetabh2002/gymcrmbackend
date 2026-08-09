@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ConflictException,
@@ -30,7 +31,9 @@ import {
 import { PaymentsService } from '../payments/payments.service';
 import { CompanyContextService } from '../common/company-context/company-context.service';
 import {
-  PaginationQueryDto,
+  MAX_PAGE_SIZE,
+  PaginatedResult,
+  SubscriptionListQueryDto,
   UNPAGED_SAFETY_LIMIT,
   buildResult,
   isPaged,
@@ -42,6 +45,8 @@ type LocScope = { locationId?: string };
 
 @Injectable()
 export class MemberSubscriptionsService {
+  private readonly logger = new Logger(MemberSubscriptionsService.name);
+
   constructor(
     @InjectModel(MemberSubscription.name)
     private memberSubscriptionModel: Model<MemberSubscriptionDocument>,
@@ -248,16 +253,61 @@ export class MemberSubscriptionsService {
   async findAll(
     companyId: string,
     locScope: LocScope = {},
-  ): Promise<MemberSubscriptionDocument[]> {
-    // Only what the list renders, newest first, and never the whole company at
-    // once — an unbounded populate here grew with every member ever added.
-    return this.memberSubscriptionModel
-      .find({ companyId, ...locScope })
-      .populate('memberId', 'name phone email idNo')
-      .populate('planId', 'name price duration durationType')
-      .sort({ createdAt: -1 })
-      .limit(UNPAGED_SAFETY_LIMIT)
-      .exec();
+    query?: SubscriptionListQueryDto,
+  ): Promise<
+    MemberSubscriptionDocument[] | PaginatedResult<MemberSubscriptionDocument>
+  > {
+    const filter: Record<string, unknown> = { companyId, ...locScope };
+
+    if (query?.status && query.status !== 'ALL') {
+      filter.subscriptionStatus = query.status;
+    }
+
+    // Search matches the member, so resolve ids first — one indexed query
+    // instead of loading every subscription to filter in JS.
+    const term = searchRegex(query?.search);
+    if (term) {
+      const memberIds = await this.userModel
+        .find({
+          companyId,
+          userType: UserType.MEMBER,
+          $or: [{ name: term }, { phone: term }],
+        })
+        .select('_id')
+        .limit(MAX_PAGE_SIZE * 5)
+        .lean()
+        .exec();
+      filter.memberId = { $in: memberIds.map((m) => m._id) };
+    }
+
+    // Only what the list renders — a full populate pulled whole member and plan
+    // documents for every row.
+    const listQuery = () =>
+      this.memberSubscriptionModel
+        .find(filter)
+        .populate('memberId', 'name phone email idNo')
+        .populate('planId', 'name price duration durationType')
+        .sort({ createdAt: -1 });
+
+    if (!isPaged(query)) {
+      const rows = await listQuery()
+        .limit(UNPAGED_SAFETY_LIMIT + 1)
+        .exec();
+      if (rows.length > UNPAGED_SAFETY_LIMIT) {
+        this.logger.warn(
+          `Unpaged subscriptions list for company ${companyId} exceeded ${UNPAGED_SAFETY_LIMIT} rows — the caller should page`,
+        );
+        return rows.slice(0, UNPAGED_SAFETY_LIMIT);
+      }
+      return rows;
+    }
+
+    const { skip, limit } = resolvePaging(query);
+    const [items, total] = await Promise.all([
+      listQuery().skip(skip).limit(limit).exec(),
+      this.memberSubscriptionModel.countDocuments(filter).exec(),
+    ]);
+    return buildResult(items, total, query);
   }
 
   async findById(
