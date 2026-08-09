@@ -1,6 +1,11 @@
 export type SendEmailOptions = {
   /** Primary recipient */
   to: string | string[];
+  /**
+   * Display name to send as, e.g. the gym's own name. The address itself stays
+   * the platform's MAIL_FROM so SPF/DKIM keep passing.
+   */
+  fromName?: string;
   subject: string;
   html: string;
   text?: string;
@@ -17,13 +22,4 @@ export type EmailSendResult = {
   /** true when SMTP is not configured and we only logged */
   preview?: boolean;
   error?: string;
-};
-
-export type WelcomeSignupEmailInput = {
-  to: string;
-  adminName: string;
-  gymName: string;
-  email: string;
-  password: string;
-  loginUrl: string;
 };

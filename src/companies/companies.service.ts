@@ -26,12 +26,12 @@ import {
 } from '../gym-settings/schemas/gym-settings.schema';
 import { AuthService } from '../auth/auth.service';
 import { LocationsService } from '../locations/locations.service';
-import { EmailService } from '../email/email.service';
-import { ConfigService } from '@nestjs/config';
-import {
-  getCountry,
-  normalizeCountryCode,
-} from '../config/countries.config';
+import { EmailTemplatesService } from '../email/email-templates.service';
+import { EMAIL_TYPES } from '../config/email-templates.config';
+import { RuntimeService } from '../common/runtime/runtime.service';
+import { CRM_ROUTES } from '../config/crm-routes.config';
+import { CompanyContextService } from '../common/company-context/company-context.service';
+import { getCountry, normalizeCountryCode } from '../config/countries.config';
 
 @Injectable()
 export class CompaniesService {
@@ -44,8 +44,9 @@ export class CompaniesService {
     private gymSettingsModel: Model<GymSettingsDocument>,
     private authService: AuthService,
     private locationsService: LocationsService,
-    private emailService: EmailService,
-    private config: ConfigService,
+    private emailTemplates: EmailTemplatesService,
+    private runtime: RuntimeService,
+    private companyContext: CompanyContextService,
   ) {}
 
   private slugify(name: string): string {
@@ -141,20 +142,22 @@ export class CompaniesService {
     dto: SelfSignupDto | ManualOnboardDto,
     gymName: string,
   ) {
-    const loginUrl =
-      this.config.get<string>('CRM_PUBLIC_URL') ||
-      this.config.get<string>('FRONTEND_URL') ||
-      'http://localhost:3000';
-    const loginPage = `${loginUrl.replace(/\/$/, '')}/login`;
+    const loginPage = this.runtime.crmUrl(CRM_ROUTES.login);
 
-    void this.emailService
-      .sendWelcomeSignup({
+    void this.emailTemplates
+      .sendTemplated({
+        // No companyId yet from the gym's perspective — this mail carries the
+        // credentials that let them reach Settings in the first place.
+        companyId: null,
+        type: EMAIL_TYPES.gymWelcome,
         to: dto.adminEmail.trim().toLowerCase(),
-        adminName: dto.adminName.trim(),
-        gymName,
-        email: dto.adminEmail.trim().toLowerCase(),
-        password: dto.adminPassword,
-        loginUrl: loginPage,
+        vars: {
+          adminName: dto.adminName.trim(),
+          gymName,
+          email: dto.adminEmail.trim().toLowerCase(),
+          password: dto.adminPassword,
+          loginUrl: loginPage,
+        },
       })
       .catch(() => undefined);
   }
@@ -262,11 +265,16 @@ export class CompaniesService {
   async updateCountry(companyId: string, countryCode: string) {
     const code = normalizeCountryCode(countryCode);
     const company = await this.companyModel
-      .findByIdAndUpdate(companyId, { countryCode: code }, {
-        returnDocument: 'after',
-      })
+      .findByIdAndUpdate(
+        companyId,
+        { countryCode: code },
+        {
+          returnDocument: 'after',
+        },
+      )
       .exec();
     if (!company) throw new NotFoundException('Company not found');
+    this.companyContext.invalidate(companyId);
     return this.findById(companyId);
   }
 
@@ -298,7 +306,9 @@ export class CompaniesService {
     const user = await this.userModel.findById(superAdminUserId).exec();
     if (!user) throw new NotFoundException('User not found');
     if (user.role !== Role.SUPER_ADMIN) {
-      throw new ForbiddenException('Only SUPER_ADMIN can clear company context');
+      throw new ForbiddenException(
+        'Only SUPER_ADMIN can clear company context',
+      );
     }
     user.activeCompanyId = null;
     user.activeLocationId = null;

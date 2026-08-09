@@ -11,7 +11,10 @@ import {
   MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { INVOICE_LAYOUTS, INVOICE_STAMP_ALIGNS } from '../../config/invoice.config';
+import {
+  INVOICE_LAYOUTS,
+  INVOICE_STAMP_ALIGNS,
+} from '../../config/invoice.config';
 import { COUNTRIES } from '../../config/countries.config';
 import { INVOICE_TAX_MODES } from '../../invoices/tax.util';
 
@@ -119,6 +122,25 @@ export class UpdateGymSettingsDto {
   @IsOptional()
   @IsBoolean()
   autopayEnabled?: boolean;
+
+  /** Mandate method the member approves. */
+  @IsOptional()
+  @IsIn(['upi', 'emandate', 'card', 'nach'])
+  autopayMethod?: string;
+
+  /** Per-debit ceiling multiplier over the plan price (1–10). */
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(10)
+  autopayMandateMultiplier?: number;
+
+  /** Mandate validity in months (1–120). */
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(120)
+  autopayMandateValidityMonths?: number;
 
   /** ISO country code for this gym — see config/countries.config.ts */
   @IsOptional()

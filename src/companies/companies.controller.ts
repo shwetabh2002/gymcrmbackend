@@ -9,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { SIGNUP_THROTTLE } from '../config/throttle.config';
 import { CompaniesService } from './companies.service';
 import { SelfSignupDto } from './dto/self-signup.dto';
 import { ManualOnboardDto } from './dto/manual-onboard.dto';
@@ -23,7 +24,7 @@ export class CompaniesController {
   constructor(private readonly companiesService: CompaniesService) {}
 
   /** Public — marketing site self-signup */
-  @Throttle({ default: { ttl: 60_000, limit: 3 } })
+  @Throttle({ default: SIGNUP_THROTTLE })
   @Post('signup')
   @HttpCode(HttpStatus.CREATED)
   selfSignup(@Body() dto: SelfSignupDto) {

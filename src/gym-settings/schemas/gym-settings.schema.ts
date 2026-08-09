@@ -91,6 +91,21 @@ export class GymSettings {
    */
   @Prop({ type: Boolean, default: false })
   autopayEnabled: boolean;
+
+  /** Mandate method the member approves: upi | emandate | card | nach. */
+  @Prop({ type: String, default: 'upi' })
+  autopayMethod: string;
+
+  /**
+   * Per-debit ceiling = plan price × this. Headroom so a plan price rise does
+   * not force every member to re-approve their mandate.
+   */
+  @Prop({ type: Number, default: 2 })
+  autopayMandateMultiplier: number;
+
+  /** How long the mandate itself stays valid. */
+  @Prop({ type: Number, default: 60 })
+  autopayMandateValidityMonths: number;
 }
 
 export const GymSettingsSchema = SchemaFactory.createForClass(GymSettings);

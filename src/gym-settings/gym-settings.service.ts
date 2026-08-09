@@ -13,10 +13,8 @@ import {
   isInvoiceLayout,
   isInvoiceStampAlign,
 } from '../config/invoice.config';
-import {
-  getCountry,
-  normalizeCountryCode,
-} from '../config/countries.config';
+import { getCountry, normalizeCountryCode } from '../config/countries.config';
+import { CompanyContextService } from '../common/company-context/company-context.service';
 import {
   DEFAULT_INVOICE_TAX_MODE,
   DEFAULT_INVOICE_TAX_PERCENTAGE,
@@ -39,6 +37,7 @@ export class GymSettingsService {
     @InjectModel(Company.name)
     private companyModel: Model<CompanyDocument>,
     private storageService: StorageService,
+    private companyContext: CompanyContextService,
   ) {}
 
   private async toClient(doc: any) {
@@ -83,6 +82,15 @@ export class GymSettingsService {
         ? doc.invoiceTaxMode
         : DEFAULT_INVOICE_TAX_MODE,
       autopayEnabled: doc.autopayEnabled === true,
+      autopayMethod: doc.autopayMethod || 'upi',
+      autopayMandateMultiplier:
+        typeof doc.autopayMandateMultiplier === 'number'
+          ? doc.autopayMandateMultiplier
+          : 2,
+      autopayMandateValidityMonths:
+        typeof doc.autopayMandateValidityMonths === 'number'
+          ? doc.autopayMandateValidityMonths
+          : 60,
       countryCode: country.code,
       countryName: country.name,
       currency: country.currency,
@@ -197,6 +205,15 @@ export class GymSettingsService {
     if (dto.autopayEnabled !== undefined) {
       update.autopayEnabled = dto.autopayEnabled;
     }
+    if (dto.autopayMethod !== undefined) {
+      update.autopayMethod = dto.autopayMethod;
+    }
+    if (dto.autopayMandateMultiplier !== undefined) {
+      update.autopayMandateMultiplier = dto.autopayMandateMultiplier;
+    }
+    if (dto.autopayMandateValidityMonths !== undefined) {
+      update.autopayMandateValidityMonths = dto.autopayMandateValidityMonths;
+    }
 
     const doc = await this.settingsModel
       .findOneAndUpdate({ companyId: cid }, update, {
@@ -224,6 +241,8 @@ export class GymSettingsService {
           countryCode: normalizeCountryCode(dto.countryCode),
         })
         .exec();
+      // Currency + phone formatting are cached per company — refresh them.
+      this.companyContext.invalidate(companyId);
     }
 
     return this.toClient(doc);

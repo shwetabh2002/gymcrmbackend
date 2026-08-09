@@ -2,16 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 import type Transporter from 'nodemailer/lib/mailer';
-import {
-  EmailSendResult,
-  SendEmailOptions,
-  WelcomeSignupEmailInput,
-} from './email.types';
-import {
-  welcomeSignupHtml,
-  welcomeSignupSubject,
-  welcomeSignupText,
-} from './templates/welcome-signup.template';
+import { EmailSendResult, SendEmailOptions } from './email.types';
 
 /**
  * Injectable mailer for any feature (signup, invoices, resets…).
@@ -40,8 +31,7 @@ export class EmailService implements OnModuleInit {
 
     if (from) this.fromAddress = from;
 
-    const explicitlyOff =
-      flag === 'false' || flag === '0' || flag === 'off';
+    const explicitlyOff = flag === 'false' || flag === '0' || flag === 'off';
 
     if (!host || explicitlyOff) {
       this.enabled = false;
@@ -63,10 +53,21 @@ export class EmailService implements OnModuleInit {
     );
   }
 
+  /**
+   * Address to send as. A gym's name is swapped into the display part while the
+   * mailbox stays the platform's, so authentication is unaffected.
+   */
+  private resolveFrom(fromName?: string): string {
+    if (!fromName?.trim()) return this.fromAddress;
+    const match = /<([^>]+)>/.exec(this.fromAddress);
+    const mailbox = match ? match[1] : this.fromAddress;
+    return `${fromName.trim().replace(/["<>]/g, '')} <${mailbox}>`;
+  }
+
   /** Low-level send — use from any service via DI */
   async send(options: SendEmailOptions): Promise<EmailSendResult> {
     const payload = {
-      from: this.fromAddress,
+      from: this.resolveFrom(options.fromName),
       to: options.to,
       subject: options.subject,
       html: options.html,
@@ -96,17 +97,5 @@ export class EmailService implements OnModuleInit {
       this.logger.error(`Email failed: ${message}`);
       return { ok: false, error: message };
     }
-  }
-
-  /** Welcome mail with login credentials after gym signup / onboard */
-  async sendWelcomeSignup(
-    input: WelcomeSignupEmailInput,
-  ): Promise<EmailSendResult> {
-    return this.send({
-      to: input.to,
-      subject: welcomeSignupSubject(input.gymName),
-      html: welcomeSignupHtml(input),
-      text: welcomeSignupText(input),
-    });
   }
 }
