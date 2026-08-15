@@ -36,6 +36,13 @@ export class CountersService {
     return `INV-${dateStr}-${String(seq).padStart(4, '0')}`;
   }
 
+  /** Platform's own invoice number (we bill the gyms): PLT-YYYYMMDD-NNNN */
+  async nextPlatformInvoiceNumber(): Promise<string> {
+    const seq = await this.next('platform-invoice');
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    return `PLT-${dateStr}-${String(seq).padStart(4, '0')}`;
+  }
+
   /** Per-company member ID: PREFIX-0001 */
   async nextMemberId(prefix: string, companyId: string): Promise<string> {
     if (!companyId) {

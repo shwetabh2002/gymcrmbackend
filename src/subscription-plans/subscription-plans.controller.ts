@@ -18,9 +18,10 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('subscription-plans')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class SubscriptionPlansController {
   constructor(
     private readonly subscriptionPlansService: SubscriptionPlansService,

@@ -14,9 +14,13 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
+import { RequiresFeature } from '../platform-billing/decorators/billing.decorators';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('autopay')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
+// UPI Autopay is a paid capability; plans without it get a clear upgrade error.
+@RequiresFeature('AUTOPAY')
 export class AutopayController {
   constructor(
     private readonly worker: AutopayWorkerService,

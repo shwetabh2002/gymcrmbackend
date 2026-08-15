@@ -22,9 +22,10 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { getUploadLimits } from '../config/upload.config';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('gym-settings')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class GymSettingsController {
   constructor(private readonly gymSettingsService: GymSettingsService) {}
 

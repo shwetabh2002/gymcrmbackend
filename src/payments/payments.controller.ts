@@ -29,9 +29,10 @@ import { LocationScope } from '../common/tenant/location.decorator';
 import { getUploadLimits } from '../config/upload.config';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { PaymentListQueryDto } from '../common/pagination/pagination';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('payments')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 

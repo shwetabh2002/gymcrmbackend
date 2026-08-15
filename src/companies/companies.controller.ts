@@ -18,8 +18,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role } from '../common/enums/role.enum';
+import { BillingExempt } from '../platform-billing/decorators/billing.decorators';
 
 @Controller('companies')
+@BillingExempt()
 export class CompaniesController {
   constructor(private readonly companiesService: CompaniesService) {}
 

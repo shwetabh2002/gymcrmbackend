@@ -18,9 +18,10 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('locations')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class LocationsController {
   constructor(private readonly locationsService: LocationsService) {}
 

@@ -98,6 +98,8 @@ async function main() {
     invoiceTaxPercentage: 18,
     invoiceTaxMode: 'excluded',
   });
+  // Autopay is a paid capability; move to the plan that includes it.
+  await api('POST', '/subscription/plan', { planCode: 'GROWTH' });
   await api('POST', '/payment-provider/razorpay/mock', {});
   await api('POST', '/whatsapp/mock', {});
 
@@ -217,7 +219,7 @@ async function main() {
       enableAutopay: true,
     })
   ).body;
-  await fetch(co.shareUrl);
+  await fetch(co.shareUrl, { redirect: 'manual' });
   const yMemberId = co.draftMemberId;
   let ySub = (await api('GET', `/member-subscriptions/member/${yMemberId}`)).body[0];
   const expiryBefore = String(ySub.expiryDate).slice(0, 10);

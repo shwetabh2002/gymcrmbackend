@@ -17,6 +17,7 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 class UpdateEmailTemplateDto {
   /** Empty string restores the platform default. */
@@ -38,7 +39,7 @@ class UpdateEmailTemplateDto {
 
 /** Settings → Email: each gym writes its own copy for member-facing mails. */
 @Controller('email-templates')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class EmailTemplatesController {
   constructor(private readonly templates: EmailTemplatesService) {}
 

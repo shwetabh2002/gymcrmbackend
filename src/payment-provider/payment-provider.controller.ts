@@ -20,6 +20,7 @@ import { PermissionsGuard } from '../auth/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 class ConnectApiKeysDto {
   @IsString()
@@ -48,7 +49,7 @@ export class PaymentProviderController {
   ) {}
 
   @Get()
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
   @RequirePermissions(Permission.SETTINGS_VIEW, Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   status(@CompanyId() companyId: string) {
@@ -56,7 +57,7 @@ export class PaymentProviderController {
   }
 
   @Get('razorpay/connect')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   async startConnect(@CompanyId() companyId: string, @Request() req: any) {
@@ -85,7 +86,7 @@ export class PaymentProviderController {
   }
 
   @Post('razorpay/api-keys')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   connectKeys(
@@ -103,7 +104,7 @@ export class PaymentProviderController {
   }
 
   @Post('razorpay/mock')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   connectMock(@CompanyId() companyId: string, @Request() req: any) {
@@ -112,7 +113,7 @@ export class PaymentProviderController {
 
   /** Gym pastes the signing secret it created in its own Razorpay dashboard. */
   @Post('razorpay/webhook-secret')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   setWebhookSecret(
@@ -123,7 +124,7 @@ export class PaymentProviderController {
   }
 
   @Post('razorpay/disconnect')
-  @UseGuards(JwtAuthGuard, PermissionsGuard)
+  @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   disconnect(@CompanyId() companyId: string) {

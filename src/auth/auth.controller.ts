@@ -13,8 +13,10 @@ import { LoginDto } from './dto/login.dto';
 import { JwtRefreshGuard } from './guards/jwt-refresh.guard';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { BillingExempt } from '../platform-billing/decorators/billing.decorators';
 
 @Controller('auth')
+@BillingExempt()
 export class AuthController {
   constructor(private authService: AuthService) {}
 

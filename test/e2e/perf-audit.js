@@ -76,6 +76,8 @@ async function main() {
   const companyId = new ObjectId(signup.body.user.companyId);
   const locationId = new ObjectId(signup.body.location.id);
 
+  // Autopay is a paid capability; move to the plan that includes it.
+  await api('POST', '/subscription/plan', { planCode: 'GROWTH' });
   const plan = (
     await api('POST', '/subscription-plans', {
       name: 'Monthly',

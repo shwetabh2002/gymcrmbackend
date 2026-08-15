@@ -78,6 +78,8 @@ async function main() {
   const locationId = signup.body.location.id;
 
   await api('PUT', '/gym-settings', { autopayEnabled: true });
+  // Autopay is a paid capability; move to the plan that includes it.
+  await api('POST', '/subscription/plan', { planCode: 'GROWTH' });
   await api('POST', '/payment-provider/razorpay/mock', {});
   await api('POST', '/whatsapp/mock', {});
   const plan = (
@@ -103,7 +105,7 @@ async function main() {
       enableAutopay: true,
     })
   ).body;
-  await fetch(co.shareUrl);
+  await fetch(co.shareUrl, { redirect: 'manual' });
   const memberId = co.draftMemberId;
   const before = (await api('GET', `/payments/member/${memberId}`)).body;
   check('one payment before the sweep', before.length, 1);

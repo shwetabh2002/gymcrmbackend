@@ -20,6 +20,7 @@ import { CheckoutService } from '../checkout/checkout.service';
 import { PaymentProviderService } from '../payment-provider/payment-provider.service';
 import { RazorpayApiService } from '../payment-provider/razorpay-api.service';
 import { MandatesService } from '../autopay/mandates.service';
+import { PlatformChargingService } from '../platform-billing/platform-charging.service';
 import { MandateStatus } from '../common/enums/billing.enum';
 import { RuntimeService } from '../common/runtime/runtime.service';
 import {
@@ -47,6 +48,7 @@ export class RazorpayWebhookController {
     private provider: PaymentProviderService,
     private razorpay: RazorpayApiService,
     private mandates: MandatesService,
+    private platformCharging: PlatformChargingService,
     private runtime: RuntimeService,
     @InjectModel(CheckoutSession.name)
     private sessionModel: Model<CheckoutSessionDocument>,
@@ -111,6 +113,33 @@ export class RazorpayWebhookController {
       orderEntity?.notes ||
       tokenEntity?.notes ||
       {};
+
+    // ── Our own subscription fees, not a gym's member payment ──
+    if (notes.platformBilling === '1') {
+      const succeeded =
+        event === RAZORPAY_EVENTS.paymentCaptured ||
+        event === RAZORPAY_EVENTS.invoicePaid ||
+        event === RAZORPAY_EVENTS.orderPaid ||
+        event === RAZORPAY_EVENTS.tokenConfirmed;
+      const failed =
+        event === RAZORPAY_EVENTS.paymentFailed ||
+        event === RAZORPAY_EVENTS.tokenRejected;
+
+      if (!succeeded && !failed) return { ok: true, skipped: true };
+
+      const result = await this.platformCharging.settleFromWebhook({
+        companyId: String(notes.companyId || companyId),
+        paymentId: paymentEntity?.id || `token_${tokenEntity?.id}`,
+        chargeId: notes.chargeId || null,
+        tokenId: paymentEntity?.token_id || tokenEntity?.id || null,
+        customerId:
+          paymentEntity?.customer_id || tokenEntity?.customer_id || null,
+        succeeded,
+        reason:
+          paymentEntity?.error_description || (failed ? event : undefined),
+      });
+      return { ...result, handled: 'platform_billing' };
+    }
 
     // ── Recurring debits initiated by our own worker ──
     if (notes[PAYMENT_NOTE_KEYS.source] === PAYMENT_NOTE_SOURCE.autopay) {

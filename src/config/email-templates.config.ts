@@ -19,6 +19,10 @@ export const EMAIL_TYPES = {
   paymentReceipt: 'PAYMENT_RECEIPT',
   /** A recurring debit failed. */
   autopayFailed: 'AUTOPAY_FAILED',
+  /** The gym's own trial with us is running out. */
+  trialEnding: 'TRIAL_ENDING',
+  /** The trial ended without a payment method. */
+  trialEnded: 'TRIAL_ENDED',
 } as const;
 
 export type EmailType = (typeof EMAIL_TYPES)[keyof typeof EMAIL_TYPES];
@@ -170,6 +174,55 @@ export const EMAIL_TEMPLATES: Record<EmailType, EmailTemplateDefinition> = {
       '{gymName} · {gymPhone}',
     ].join('\n'),
     editableByGym: true,
+    defaultEnabled: true,
+  },
+
+  [EMAIL_TYPES.trialEnding]: {
+    type: EMAIL_TYPES.trialEnding,
+    label: 'Trial ending',
+    description:
+      'Reminds the gym owner their trial with us is about to end. Platform-owned.',
+    placeholders: [
+      'adminName',
+      'daysLeft',
+      'trialEndsAt',
+      'planCode',
+      'billingUrl',
+    ],
+    defaultSubject: 'Your GymFlow trial ends in {daysLeft} days',
+    defaultBody: [
+      'Hi {adminName},',
+      '',
+      'Your free trial ends on {trialEndsAt} — {daysLeft} days from now.',
+      '',
+      'Pick a plan to keep adding members and taking payments:',
+      '{billingUrl}',
+      '',
+      'Your data stays safe either way.',
+    ].join('\n'),
+    // Ours, not the gym's: a gym should not be able to rewrite or switch off
+    // the notice that its own account is lapsing.
+    editableByGym: false,
+    defaultEnabled: true,
+  },
+
+  [EMAIL_TYPES.trialEnded]: {
+    type: EMAIL_TYPES.trialEnded,
+    label: 'Trial ended',
+    description:
+      'Tells the gym owner the trial has ended and the account is read-only. Platform-owned.',
+    placeholders: ['adminName', 'billingUrl'],
+    defaultSubject: 'Your GymFlow trial has ended',
+    defaultBody: [
+      'Hi {adminName},',
+      '',
+      'Your trial has ended. Everything you added is still there and still',
+      'readable — you just cannot add new members or take payments until you',
+      'pick a plan.',
+      '',
+      'Choose a plan: {billingUrl}',
+    ].join('\n'),
+    editableByGym: false,
     defaultEnabled: true,
   },
 };

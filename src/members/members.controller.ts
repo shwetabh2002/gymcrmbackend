@@ -31,6 +31,7 @@ import {
 } from '../common/tenant/location.decorator';
 import { getUploadLimits } from '../config/upload.config';
 import { MemberListQueryDto } from '../common/pagination/pagination';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 function actorFromReq(req: any) {
   return req?.user
@@ -39,7 +40,7 @@ function actorFromReq(req: any) {
 }
 
 @Controller('members')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class MembersController {
   constructor(private readonly membersService: MembersService) {}
 

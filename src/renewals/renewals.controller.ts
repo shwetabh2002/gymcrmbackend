@@ -19,9 +19,10 @@ import { Permission } from '../common/enums/permission.enum';
 import { RenewalFollowUpStatus } from '../common/enums/renewal-follow-up-status.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { LocationScope } from '../common/tenant/location.decorator';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('renewals')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class RenewalsController {
   constructor(private readonly renewalsService: RenewalsService) {}
 

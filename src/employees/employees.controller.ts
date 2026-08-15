@@ -29,9 +29,10 @@ import { AccountStatus } from '../common/enums/account-status.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { LocationScope } from '../common/tenant/location.decorator';
 import { getUploadLimits } from '../config/upload.config';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('employees')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class EmployeesController {
   constructor(private readonly employeesService: EmployeesService) {}
 
@@ -73,10 +74,7 @@ export class EmployeesController {
   }
 
   @Post(':id/photo')
-  @RequirePermissions(
-    Permission.EMPLOYEES_UPDATE,
-    Permission.EMPLOYEES_CREATE,
-  )
+  @RequirePermissions(Permission.EMPLOYEES_UPDATE, Permission.EMPLOYEES_CREATE)
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(
     FileInterceptor('file', {

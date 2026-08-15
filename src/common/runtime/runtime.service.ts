@@ -11,6 +11,9 @@ const DEFAULT_MARKETING_PORT = 3001;
 /** Used where a provider requires an address but no member email exists. */
 const SYSTEM_EMAIL = 'noreply@gym.local';
 
+/** GST on SaaS in India. */
+const DEFAULT_PLATFORM_TAX_PCT = 18;
+
 /**
  * Env values that ship as placeholders. Production must not run on any of them.
  *
@@ -127,6 +130,15 @@ export class RuntimeService {
   razorpayMockPayUrl(linkId: string, withToken = false): string {
     const query = withToken ? '?token=1' : '';
     return `${this.backendPublicUrl()}/${RAZORPAY_WEBHOOK_PATH}/mock-pay/${linkId}${query}`;
+  }
+
+  /**
+   * GST we add to our own subscription invoices. SaaS in India is taxable, and
+   * the rate belongs in config rather than scattered through billing.
+   */
+  platformTaxPercentage(): number {
+    const raw = Number(this.config.get<string>('PLATFORM_TAX_PERCENTAGE'));
+    return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_PLATFORM_TAX_PCT;
   }
 
   /** Fallback sender address for provider calls that demand one. */

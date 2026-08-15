@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   ConflictException,
   NotFoundException,
   ForbiddenException,
@@ -31,10 +32,13 @@ import { EMAIL_TYPES } from '../config/email-templates.config';
 import { RuntimeService } from '../common/runtime/runtime.service';
 import { CRM_ROUTES } from '../config/crm-routes.config';
 import { CompanyContextService } from '../common/company-context/company-context.service';
+import { PlatformBillingService } from '../platform-billing/platform-billing.service';
 import { getCountry, normalizeCountryCode } from '../config/countries.config';
 
 @Injectable()
 export class CompaniesService {
+  private readonly logger = new Logger(CompaniesService.name);
+
   constructor(
     @InjectModel(Company.name)
     private companyModel: Model<CompanyDocument>,
@@ -47,6 +51,7 @@ export class CompaniesService {
     private emailTemplates: EmailTemplatesService,
     private runtime: RuntimeService,
     private companyContext: CompanyContextService,
+    private platformBilling: PlatformBillingService,
   ) {}
 
   private slugify(name: string): string {
@@ -170,6 +175,18 @@ export class CompaniesService {
       CompanyStatus.TRIAL,
     );
 
+    // Every gym gets a billing standing from the first second, so no account
+    // can exist that nobody can reason about later.
+    await this.platformBilling
+      .startTrial(String(company._id))
+      .catch((err) =>
+        this.logger.warn(
+          `Trial could not be started for ${String(company._id)}: ${
+            err instanceof Error ? err.message : err
+          }`,
+        ),
+      );
+
     this.notifyWelcomeCredentials(dto, company.name);
 
     const session = await this.authService.loginAsUser(admin);
@@ -193,6 +210,10 @@ export class CompaniesService {
       CompanySource.MANUAL,
       CompanyStatus.ACTIVE,
     );
+
+    await this.platformBilling
+      .startTrial(String(company._id))
+      .catch(() => undefined);
 
     this.notifyWelcomeCredentials(dto, company.name);
 

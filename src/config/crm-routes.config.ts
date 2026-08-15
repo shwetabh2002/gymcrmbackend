@@ -11,6 +11,7 @@ export const CRM_ROUTES = {
   members: 'users',
   renewals: 'renewals',
   billing: 'billing',
+  subscription: 'settings/subscription',
   /** Where the signup handoff drops the browser with its tokens. */
   authCallback: 'auth/callback',
 } as const;

@@ -22,9 +22,10 @@ import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { LocationScope } from '../common/tenant/location.decorator';
 import { SubscriptionListQueryDto } from '../common/pagination/pagination';
+import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 
 @Controller('member-subscriptions')
-@UseGuards(JwtAuthGuard, PermissionsGuard)
+@UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
 export class MemberSubscriptionsController {
   constructor(
     private readonly memberSubscriptionsService: MemberSubscriptionsService,
