@@ -58,13 +58,13 @@ JWT_REFRESH_EXPIRATION=365d
 NODE_ENV=production
 PORT=3000
 
-# Production MongoDB (use your production cluster)
-MONGODB_URI=mongodb+srv://produser:prodpassword@prodcluster.mongodb.net/backendgym
+# Production MongoDB Atlas (placeholders only — put real URI in .env, never in git)
+MONGODB_URI=mongodb+srv://USER:PASSWORD@CLUSTER.mongodb.net/backendgym
 
-# JWT - Shorter expiry for security
-JWT_ACCESS_SECRET=super-secure-random-secret-generate-this-properly
+# JWT — generate strong random secrets for production (.env only)
+JWT_ACCESS_SECRET=CHANGE_ME
 JWT_ACCESS_EXPIRATION=15m
-JWT_REFRESH_SECRET=super-secure-refresh-secret-generate-this-properly
+JWT_REFRESH_SECRET=CHANGE_ME
 JWT_REFRESH_EXPIRATION=7d
 ```
 
