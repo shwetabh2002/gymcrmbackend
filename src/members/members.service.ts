@@ -26,6 +26,10 @@ import {
   todayOrTomorrowOrder,
 } from '../common/utils/upcoming-celebration.util';
 import { computeMemberDiscount } from '../common/utils/member-discount.util';
+import {
+  applyEffectiveMemberStatus,
+  effectiveMemberStatusAddFieldsStages,
+} from '../common/utils/member-effective-status.util';
 import { MembersListQueryDto } from './dto/members-list-query.dto';
 
 @Injectable()
@@ -162,6 +166,7 @@ export class MembersService {
     // Enrich with payment summary for members from simplified flow
     return Promise.all(
       members.map(async (member) => {
+        const base = applyEffectiveMemberStatus(member.toObject());
         // Only add payment summary for simplified flow members (those with membershipMonths)
         if (member.membershipMonths) {
           const payments = await this.memberPaymentModel
@@ -174,7 +179,7 @@ export class MembersService {
           const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
 
           return {
-            ...member.toObject(),
+            ...base,
             paymentSummary: {
               totalReceived,
               totalPending,
@@ -185,7 +190,7 @@ export class MembersService {
             },
           };
         }
-        return member.toObject();
+        return base;
       }),
     );
   }
@@ -211,6 +216,7 @@ export class MembersService {
   }> {
     const page = Number(query.page || 1);
     const limit = Number(query.limit || 10);
+    const now = new Date();
 
     const baseFilter: Record<string, any> = {
       userType: UserType.MEMBER,
@@ -227,9 +233,7 @@ export class MembersService {
       ];
     }
 
-    if (query.status && query.status !== 'ALL') {
-      baseFilter.memberStatus = query.status;
-    }
+    // Status filter uses expiry-derived effectiveMemberStatus (not raw DB flag)
     if (query.type && query.type !== 'ALL') {
       baseFilter.memberType = query.type;
     }
@@ -257,8 +261,11 @@ export class MembersService {
       ];
     }
 
-    const needsInMemoryPending =
-      (query.pending && query.pending !== 'ALL') || !!query.pendingByDate;
+    const statusStages = effectiveMemberStatusAddFieldsStages(now);
+    const statusMatch =
+      query.status && query.status !== 'ALL'
+        ? [{ $match: { effectiveMemberStatus: query.status } }]
+        : [];
 
     const enrichPage = async (pageMembers: any[]) => {
       const pageIds = pageMembers.map((m) => m._id);
@@ -276,8 +283,9 @@ export class MembersService {
         }
       }
       return pageMembers.map((member) => {
-        if (!member.membershipMonths) return member;
-        const payments = paymentsByMember.get(String(member._id)) ?? [];
+        const withStatus = applyEffectiveMemberStatus(member, now);
+        if (!withStatus.membershipMonths) return withStatus;
+        const payments = paymentsByMember.get(String(withStatus._id)) ?? [];
         const totalAmount = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
         const totalReceived = payments.reduce(
           (sum, p) => sum + (p.received || 0),
@@ -287,7 +295,7 @@ export class MembersService {
         const lastPayment =
           payments.length > 0 ? payments[payments.length - 1] : null;
         return {
-          ...member,
+          ...withStatus,
           paymentSummary: {
             totalReceived,
             totalPending,
@@ -300,121 +308,37 @@ export class MembersService {
       });
     };
 
-    // Fast path: pending filters not used — paginate + summary in Mongo
-    if (!needsInMemoryPending) {
-      const [total, pageMembers, summaryAgg] = await Promise.all([
-        this.userModel.countDocuments(baseFilter).exec(),
-        this.userModel
-          .find(baseFilter)
-          .select('-password -refreshToken')
-          .sort({ createdAt: -1 })
-          .skip((Math.max(1, page) - 1) * limit)
-          .limit(limit)
-          .lean()
-          .exec(),
-        this.userModel
-          .aggregate([
-            { $match: baseFilter },
-            {
-              $addFields: {
-                activeMembership: {
-                  $first: {
-                    $filter: {
-                      input: { $ifNull: ['$memberships', []] },
-                      as: 'm',
-                      cond: { $eq: ['$$m.status', 'ACTIVE'] },
-                    },
-                  },
-                },
-              },
-            },
-            {
-              $group: {
-                _id: null,
-                totalMembers: { $sum: 1 },
-                activeMembers: {
-                  $sum: {
-                    $cond: [{ $eq: ['$memberStatus', 'ACTIVE'] }, 1, 0],
-                  },
-                },
-                ptMembers: {
-                  $sum: { $cond: [{ $eq: ['$trainingType', 'PT'] }, 1, 0] },
-                },
-                gtMembers: {
-                  $sum: { $cond: [{ $eq: ['$trainingType', 'GT'] }, 1, 0] },
-                },
-                totalReceived: {
-                  $sum: {
-                    $ifNull: [
-                      '$activeMembership.amountPaid',
-                      { $ifNull: ['$received', 0] },
-                    ],
-                  },
-                },
-                totalPending: {
-                  $sum: {
-                    $ifNull: [
-                      '$activeMembership.pendingAmount',
-                      { $ifNull: ['$pending', 0] },
-                    ],
-                  },
-                },
-              },
-            },
-          ])
-          .exec(),
-      ]);
-
-      const totalPages = Math.max(1, Math.ceil(total / limit));
-      const safePage = Math.min(Math.max(1, page), totalPages);
-      const data = await enrichPage(pageMembers);
-      const agg = summaryAgg[0] || {
-        totalMembers: 0,
-        activeMembers: 0,
-        totalReceived: 0,
-        totalPending: 0,
-        ptMembers: 0,
-        gtMembers: 0,
-      };
-
-      return {
-        data,
-        pagination: {
-          total,
-          page: safePage,
-          limit,
-          totalPages,
-          hasNextPage: safePage < totalPages,
-          hasPrevPage: safePage > 1,
-        },
-        summary: {
-          totalMembers: agg.totalMembers,
-          activeMembers: agg.activeMembers,
-          totalReceived: agg.totalReceived,
-          totalPending: agg.totalPending,
-          ptMembers: agg.ptMembers,
-          gtMembers: agg.gtMembers,
-        },
-      };
-    }
-
-    // Slow path: pending / pendingByDate — filter with aggregation, then paginate
-    const pendingPipeline: any[] = [
+    const basePipeline: any[] = [
       { $match: baseFilter },
+      ...statusStages,
+      ...statusMatch,
       {
         $addFields: {
           activeMembership: {
-            $first: {
-              $filter: {
-                input: { $ifNull: ['$memberships', []] },
-                as: 'm',
-                cond: { $eq: ['$$m.status', 'ACTIVE'] },
+            $ifNull: [
+              '$_currentMembership',
+              {
+                $first: {
+                  $filter: {
+                    input: { $ifNull: ['$memberships', []] },
+                    as: 'm',
+                    cond: { $eq: ['$$m.status', 'ACTIVE'] },
+                  },
+                },
               },
-            },
+            ],
           },
         },
       },
-      {
+    ];
+
+    const needsPendingFilter =
+      (query.pending && query.pending !== 'ALL') || !!query.pendingByDate;
+
+    const pendingPipeline: any[] = [...basePipeline];
+
+    if (needsPendingFilter) {
+      pendingPipeline.push({
         $addFields: {
           _pendingAmount: {
             $ifNull: [
@@ -426,29 +350,29 @@ export class MembersService {
             $ifNull: ['$activeMembership.pendingDueDate', '$pendingDueDate'],
           },
         },
-      },
-    ];
-
-    if (query.pending === 'HAS_PENDING') {
-      pendingPipeline.push({ $match: { _pendingAmount: { $gt: 0 } } });
-    } else if (query.pending === 'FULLY_PAID') {
-      pendingPipeline.push({
-        $match: {
-          $or: [{ _pendingAmount: { $lte: 0 } }, { _pendingAmount: null }],
-        },
       });
-    }
 
-    if (query.pendingByDate) {
-      pendingPipeline.push({
-        $match: {
-          _pendingAmount: { $gt: 0 },
-          _pendingDueDate: {
-            $ne: null,
-            $lte: new Date(query.pendingByDate),
+      if (query.pending === 'HAS_PENDING') {
+        pendingPipeline.push({ $match: { _pendingAmount: { $gt: 0 } } });
+      } else if (query.pending === 'FULLY_PAID') {
+        pendingPipeline.push({
+          $match: {
+            $or: [{ _pendingAmount: { $lte: 0 } }, { _pendingAmount: null }],
           },
-        },
-      });
+        });
+      }
+
+      if (query.pendingByDate) {
+        pendingPipeline.push({
+          $match: {
+            _pendingAmount: { $gt: 0 },
+            _pendingDueDate: {
+              $ne: null,
+              $lte: new Date(query.pendingByDate),
+            },
+          },
+        });
+      }
     }
 
     const [filteredAgg, summaryAgg] = await Promise.all([
@@ -469,6 +393,10 @@ export class MembersService {
                     activeMembership: 0,
                     _pendingAmount: 0,
                     _pendingDueDate: 0,
+                    _currentMembership: 0,
+                    _effectiveExpiry: 0,
+                    _inactiveAfter: 0,
+                    effectiveMemberStatus: 0,
                   },
                 },
               ],
@@ -485,7 +413,11 @@ export class MembersService {
               totalMembers: { $sum: 1 },
               activeMembers: {
                 $sum: {
-                  $cond: [{ $eq: ['$memberStatus', 'ACTIVE'] }, 1, 0],
+                  $cond: [
+                    { $eq: ['$effectiveMemberStatus', 'ACTIVE'] },
+                    1,
+                    0,
+                  ],
                 },
               },
               ptMembers: {
@@ -503,7 +435,14 @@ export class MembersService {
                 },
               },
               totalPending: {
-                $sum: { $ifNull: ['$_pendingAmount', 0] },
+                $sum: {
+                  $ifNull: [
+                    needsPendingFilter
+                      ? '$_pendingAmount'
+                      : '$activeMembership.pendingAmount',
+                    { $ifNull: ['$pending', 0] },
+                  ],
+                },
               },
             },
           },
@@ -561,6 +500,8 @@ export class MembersService {
       throw new NotFoundException(`Member with ID ${id} not found`);
     }
 
+    const base = applyEffectiveMemberStatus(member.toObject());
+
     // Add payment summary for simplified flow members
     if (member.membershipMonths) {
       const payments = await this.memberPaymentModel
@@ -573,7 +514,7 @@ export class MembersService {
       const lastPayment = payments.length > 0 ? payments[payments.length - 1] : null;
 
       return {
-        ...member.toObject(),
+        ...base,
         paymentSummary: {
           totalReceived,
           totalPending,
@@ -585,7 +526,7 @@ export class MembersService {
       };
     }
 
-    return member;
+    return base;
   }
 
   async update(id: string, updateDto: UpdateMemberDto): Promise<UserDocument> {

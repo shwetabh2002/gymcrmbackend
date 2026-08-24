@@ -15,6 +15,11 @@ import { UserType } from '../common/enums/user-type.enum';
 import { SubscriptionStatus } from '../common/enums/subscription-status.enum';
 import { PaymentStatus } from '../common/enums/payment-status.enum';
 import { memberDiscountRupeesForAnalytics } from '../common/utils/member-discount.util';
+import {
+  effectiveMemberStatusAddFieldsStages,
+  getCurrentMembership,
+  startOfTodayLocal,
+} from '../common/utils/member-effective-status.util';
 import { EmployeesService } from '../employees/employees.service';
 import { MembersService } from '../members/members.service';
 
@@ -90,10 +95,29 @@ export class AnalyticsService {
       .countDocuments({ userType: UserType.MEMBER })
       .exec();
 
-    // Active subscriptions count (detailed flow only)
-    const activeSubscriptionsCount = await this.memberSubscriptionModel
-      .countDocuments({ subscriptionStatus: SubscriptionStatus.ACTIVE })
+    // Active = expiry not passed (effective status), not just stored ACTIVE flag
+    const activeUsersAgg = await this.userModel
+      .aggregate([
+        { $match: { userType: UserType.MEMBER } },
+        ...effectiveMemberStatusAddFieldsStages(now),
+        { $match: { effectiveMemberStatus: 'ACTIVE' } },
+        { $count: 'count' },
+      ])
       .exec();
+    const activeFromUsers = activeUsersAgg[0]?.count || 0;
+
+    const today = startOfTodayLocal(now);
+    const activeFromDetailedFlow = await this.memberSubscriptionModel
+      .countDocuments({
+        subscriptionStatus: SubscriptionStatus.ACTIVE,
+        expiryDate: { $gte: today },
+      })
+      .exec();
+
+    const activeSubscriptionsCount = Math.max(
+      activeFromUsers,
+      activeFromDetailedFlow,
+    );
 
     // Total revenue collected from BOTH flows
     // Detailed flow: Payment model
@@ -194,15 +218,45 @@ export class AnalyticsService {
 
     // ===== DETAILED LISTS =====
 
-    // Active members with subscription details
-    const activeMembers = await this.memberSubscriptionModel
-      .find({ subscriptionStatus: SubscriptionStatus.ACTIVE })
-      .populate('memberId', 'name email phone')
-      .populate('planId', 'name price')
-      .select('memberId planId startDate expiryDate paymentStatus pendingAmount')
-      .sort({ expiryDate: 1 })
-      .limit(10)
+    // Active members (expiry-based) from users.memberships
+    const activeMemberDocs = await this.userModel
+      .aggregate([
+        { $match: { userType: UserType.MEMBER } },
+        ...effectiveMemberStatusAddFieldsStages(now),
+        { $match: { effectiveMemberStatus: 'ACTIVE' } },
+        { $sort: { createdAt: -1 } },
+        { $limit: 10 },
+        {
+          $project: {
+            name: 1,
+            email: 1,
+            phone: 1,
+            memberships: 1,
+            membershipAmount: 1,
+            memberStatus: 1,
+            expiryDate: 1,
+          },
+        },
+      ])
       .exec();
+
+    const activeMembers = activeMemberDocs.map((user: any) => {
+      const activeMembership = getCurrentMembership(user);
+      return {
+        memberName: user.name || 'Unknown',
+        email: user.email || '',
+        phone: user.phone || '',
+        planName:
+          activeMembership?.package ||
+          `${activeMembership?.months || 0} Month`,
+        planPrice: activeMembership?.totalAmount ?? user.membershipAmount ?? 0,
+        startDate: activeMembership?.startDate || null,
+        expiryDate: activeMembership?.expiryDate || user.expiryDate || null,
+        paymentStatus:
+          (activeMembership?.pendingAmount ?? 0) > 0 ? 'PARTIAL' : 'PAID',
+        pendingAmount: activeMembership?.pendingAmount ?? 0,
+      };
+    });
 
     // Members with subscriptions expiring in next 7 days
     const membersNearExpiry = await this.memberSubscriptionModel
@@ -234,18 +288,66 @@ export class AnalyticsService {
       };
     });
 
-    // Members with pending/partial payments
-    const membersWithPendingPayments = await this.memberSubscriptionModel
+    // Pending members from users.memberships (simplified flow — real source)
+    const pendingMemberDocs = await this.userModel
       .find({
+        userType: UserType.MEMBER,
+        memberships: { $elemMatch: { pendingAmount: { $gt: 0 } } },
+      })
+      .select('name email phone memberships membershipAmount')
+      .exec();
+
+    const membersWithPendingPayments = pendingMemberDocs
+      .map((user: any) => {
+        const pendingMemberships = (user.memberships || []).filter(
+          (m: any) => (m.pendingAmount || 0) > 0,
+        );
+        const pendingAmount = pendingMemberships.reduce(
+          (sum: number, m: any) => sum + (m.pendingAmount || 0),
+          0,
+        );
+        const activeOrLatest =
+          pendingMemberships.find((m: any) => m.status === 'ACTIVE') ||
+          pendingMemberships[0];
+        return {
+          memberName: user.name || 'Unknown',
+          email: user.email || '',
+          phone: user.phone || '',
+          planName:
+            activeOrLatest?.package ||
+            `${activeOrLatest?.months || 0} Month`,
+          planPrice:
+            activeOrLatest?.totalAmount ?? user.membershipAmount ?? 0,
+          totalPaid: activeOrLatest?.amountPaid ?? 0,
+          pendingAmount,
+          paymentStatus: 'PARTIAL',
+        };
+      })
+      .sort((a, b) => b.pendingAmount - a.pendingAmount);
+
+    const membersWithPendingPaymentsCount = membersWithPendingPayments.length;
+
+    // Distinct members with pending balance in MemberPayment collection
+    const pendingFromPaymentsAgg = await this.memberPaymentModel.aggregate([
+      { $match: { pending: { $gt: 0 } } },
+      { $group: { _id: '$memberId' } },
+      { $count: 'count' },
+    ]);
+    const pendingFromPaymentsCount = pendingFromPaymentsAgg[0]?.count || 0;
+
+    // Also include detailed-flow pending if any remain (legacy)
+    const pendingDetailedCount = await this.memberSubscriptionModel
+      .countDocuments({
         subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
         pendingAmount: { $gt: 0 },
       })
-      .populate('memberId', 'name email phone')
-      .populate('planId', 'name price')
-      .select('memberId planId pendingAmount totalPaid planPrice paymentStatus')
-      .sort({ pendingAmount: -1 })
-      .limit(10)
       .exec();
+
+    const membersWithPendingPaymentsTotal = Math.max(
+      membersWithPendingPaymentsCount,
+      pendingFromPaymentsCount,
+      pendingDetailedCount,
+    );
 
     // Recent payments from BOTH flows (last 10 combined)
     // Detailed flow payments
@@ -345,7 +447,7 @@ export class AnalyticsService {
         monthlyRevenue,
         totalPendingAmount,
         membersNearExpiry: membersNearExpiry.length,
-        membersWithPendingPayments: membersWithPendingPayments.length,
+        membersWithPendingPayments: membersWithPendingPaymentsTotal,
         newMembersThisMonth: newMembers.length,
         totalDiscountGiven,
         discountedMembersCount,
@@ -360,32 +462,11 @@ export class AnalyticsService {
       },
 
       // Detailed Lists
-      activeMembers: activeMembers.map((sub: any) => ({
-        memberName: sub.memberId?.name || 'Unknown',
-        email: sub.memberId?.email || '',
-        phone: sub.memberId?.phone || '',
-        planName: sub.planId?.name || 'Unknown Plan',
-        planPrice: sub.planId?.price || 0,
-        startDate: sub.startDate,
-        expiryDate: sub.expiryDate,
-        paymentStatus: sub.paymentStatus,
-        pendingAmount: sub.pendingAmount,
-      })),
+      activeMembers,
 
       membersNearExpiry: membersNearExpiryWithDays,
 
-      membersWithPendingPayments: membersWithPendingPayments.map(
-        (sub: any) => ({
-          memberName: sub.memberId?.name || 'Unknown',
-          email: sub.memberId?.email || '',
-          phone: sub.memberId?.phone || '',
-          planName: sub.planId?.name || 'Unknown Plan',
-          planPrice: sub.planPrice,
-          totalPaid: sub.totalPaid,
-          pendingAmount: sub.pendingAmount,
-          paymentStatus: sub.paymentStatus,
-        }),
-      ),
+      membersWithPendingPayments: membersWithPendingPayments.slice(0, 10),
 
       recentPayments: allRecentPayments,
 
