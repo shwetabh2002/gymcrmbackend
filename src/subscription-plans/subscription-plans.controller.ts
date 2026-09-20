@@ -66,7 +66,7 @@ export class SubscriptionPlansController {
   @RequirePermissions(Permission.PLANS_DELETE)
   @HttpCode(HttpStatus.OK)
   async delete(@CompanyId() companyId: string, @Param('id') id: string) {
-    await this.subscriptionPlansService.delete(companyId, id);
-    return { message: 'Subscription plan deleted successfully' };
+    const plan = await this.subscriptionPlansService.delete(companyId, id);
+    return { message: 'Subscription plan archived', plan };
   }
 }

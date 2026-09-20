@@ -161,14 +161,23 @@ export class InvoicesService {
       0,
     );
     const companyTax = await this.resolveCompanyTax(companyId);
+    const snapPct = (subscription as any).taxPercentage;
+    const snapMode = (subscription as any).taxMode;
     const taxPercentage =
       createDto.taxPercentage !== undefined && createDto.taxPercentage !== null
         ? createDto.taxPercentage
-        : companyTax.taxPercentage;
+        : typeof snapPct === 'number'
+          ? snapPct
+          : companyTax.taxPercentage;
+    const taxMode = isInvoiceTaxMode(createDto.taxMode)
+      ? createDto.taxMode
+      : isInvoiceTaxMode(snapMode)
+        ? snapMode
+        : companyTax.taxMode;
     const breakdown = computeTaxBreakdown(
       itemsTotal,
       taxPercentage,
-      companyTax.taxMode,
+      taxMode,
     );
 
     // Line items store taxable value so PDF lines match subtotal
@@ -245,16 +254,69 @@ export class InvoicesService {
     ).exec() as Promise<InvoiceDocument>;
   }
 
+  /** List populate — enough for the table; skip payment/generatedBy. */
+  private applyInvoiceListPopulates(query: any) {
+    return query
+      .populate('memberId', 'name phone email idNo')
+      .populate({
+        path: 'subscriptionId',
+        select: 'planPrice paymentStatus startDate expiryDate',
+        populate: { path: 'planId', select: 'name' },
+      })
+      .populate({
+        path: 'locationId',
+        select: 'name code',
+      });
+  }
+
   async findAll(
     companyId: string,
     locScope: LocScope = {},
-  ): Promise<InvoiceDocument[]> {
-    return this.applyInvoicePopulates(
-      this.invoiceModel
-        .find({ companyId, deletedAt: null, ...locScope })
-        .sort({ createdAt: -1 })
-        .limit(UNPAGED_SAFETY_LIMIT),
-    ).exec();
+    query?: PaginationQueryDto & { taxMode?: string },
+  ) {
+    const filter: Record<string, unknown> = {
+      companyId,
+      deletedAt: null,
+      ...locScope,
+    };
+    if (query?.taxMode === 'included' || query?.taxMode === 'excluded') {
+      filter.taxMode = query.taxMode;
+    }
+    const term = searchRegex(query?.search);
+    if (term) {
+      // Match invoice number directly; member name via id lookup.
+      const members = await this.userModel
+        .find({
+          companyId,
+          userType: UserType.MEMBER,
+          $or: [{ name: term }, { phone: term }],
+        })
+        .select('_id')
+        .limit(200)
+        .lean()
+        .exec();
+      const memberIds = members.map((m) => m._id);
+      filter.$or = [
+        { invoiceNumber: term },
+        ...(memberIds.length ? [{ memberId: { $in: memberIds } }] : []),
+      ];
+    }
+
+    const listQuery = () =>
+      this.applyInvoiceListPopulates(
+        this.invoiceModel.find(filter).sort({ createdAt: -1 }),
+      );
+
+    if (!isPaged(query)) {
+      return listQuery().limit(UNPAGED_SAFETY_LIMIT).exec();
+    }
+
+    const { skip, limit } = resolvePaging(query);
+    const [total, items] = await Promise.all([
+      this.invoiceModel.countDocuments(filter).exec(),
+      listQuery().skip(skip).limit(limit).exec(),
+    ]);
+    return buildResult(items, total, query);
   }
 
   async findById(
@@ -370,20 +432,60 @@ export class InvoicesService {
           item.amount !== undefined &&
           Math.abs(item.amount - (invoice.items[index]?.amount ?? 0)) > 0.001,
       );
-      if (amountChanged || updateDto.taxPercentage !== undefined) {
+      // Amounts stay locked to the payment; tax mode / rate may be corrected.
+      if (amountChanged) {
         throw new BadRequestException(
-          'This invoice follows its payment, so amounts and tax cannot be edited here. ' +
-            'Void the payment and record the correct one — the invoice is reissued with it.',
+          'This invoice follows its payment, so line amounts cannot be edited here. ' +
+            'Void the payment and record the correct one — the invoice is reissued with it. ' +
+            'You can still switch GST included ↔ excluded.',
         );
       }
       if (updateDto.items) {
-        // Descriptions only; each amount is carried over untouched.
         updateData.items = updateDto.items.map((item, index) => ({
           description: item.description,
           amount: invoice.items[index]?.amount ?? 0,
         }));
       }
-    } else if (updateDto.items || updateDto.taxPercentage !== undefined) {
+      if (
+        updateDto.taxMode !== undefined ||
+        updateDto.taxPercentage !== undefined
+      ) {
+        const payment = await this.paymentModel
+          .findOne({ _id: invoice.paymentId, companyId })
+          .exec();
+        if (!payment) {
+          throw new BadRequestException(
+            'Linked payment missing — cannot recalculate tax',
+          );
+        }
+        const taxPercentage =
+          updateDto.taxPercentage !== undefined
+            ? updateDto.taxPercentage
+            : invoice.taxPercentage;
+        const taxMode = isInvoiceTaxMode(updateDto.taxMode)
+          ? updateDto.taxMode
+          : isInvoiceTaxMode(invoice.taxMode)
+            ? invoice.taxMode
+            : DEFAULT_INVOICE_TAX_MODE;
+        const breakdown = computeTaxBreakdown(
+          payment.amount,
+          taxPercentage,
+          taxMode,
+        );
+        const desc =
+          invoice.items[0]?.description || 'Membership - Payment';
+        updateData.subtotal = breakdown.subtotal;
+        updateData.taxPercentage = breakdown.taxPercentage;
+        updateData.taxAmount = breakdown.taxAmount;
+        updateData.taxMode = breakdown.taxMode;
+        updateData.totalAmount = breakdown.totalAmount;
+        updateData.items = [{ description: desc, amount: breakdown.subtotal }];
+      }
+    } else if (
+      updateDto.items ||
+      updateDto.taxPercentage !== undefined ||
+      updateDto.taxMode !== undefined
+    ) {
       const items = (updateDto.items || invoice.items).map((item: any) => ({
         description: item.description,
         amount: Number(item.amount) || 0,
@@ -392,17 +494,38 @@ export class InvoicesService {
         updateDto.taxPercentage !== undefined
           ? updateDto.taxPercentage
           : invoice.taxPercentage;
+      const taxMode = isInvoiceTaxMode(updateDto.taxMode)
+        ? updateDto.taxMode
+        : isInvoiceTaxMode(invoice.taxMode)
+          ? invoice.taxMode
+          : DEFAULT_INVOICE_TAX_MODE;
 
-      // Same helper as creation, so an "included GST" invoice is not silently
-      // converted to "excluded" by an edit.
       const gross = items.reduce((sum, item) => sum + item.amount, 0);
+      // For standalone edits: if switching mode, treat current total as the
+      // configured price so included↔excluded flips correctly.
+      const priceConfigured =
+        updateDto.taxMode !== undefined && updateDto.items === undefined
+          ? invoice.taxMode === 'included'
+            ? invoice.totalAmount
+            : invoice.subtotal
+          : gross;
       const breakdown = computeTaxBreakdown(
-        invoice.taxMode === 'included' ? gross : gross,
+        updateDto.items ? gross : priceConfigured,
         taxPercentage,
-        (invoice.taxMode as any) || DEFAULT_INVOICE_TAX_MODE,
+        taxMode,
       );
 
-      updateData.items = items;
+      updateData.items = items.map((item, _i, arr) => ({
+        description: item.description,
+        amount:
+          arr.length === 1
+            ? breakdown.subtotal
+            : Math.round(
+                ((item.amount / Math.max(1, gross)) * breakdown.subtotal +
+                  Number.EPSILON) *
+                  100,
+              ) / 100,
+      }));
       updateData.subtotal = breakdown.subtotal;
       updateData.taxPercentage = breakdown.taxPercentage;
       updateData.taxAmount = breakdown.taxAmount;

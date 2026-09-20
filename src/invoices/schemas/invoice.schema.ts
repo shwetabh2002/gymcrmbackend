@@ -108,3 +108,7 @@ InvoiceSchema.index({ companyId: 1, subscriptionId: 1, createdAt: -1 });
 
 /** Invoice raised from a payment — looked up on every void and receipt. */
 InvoiceSchema.index({ companyId: 1, paymentId: 1 });
+
+/** Soft-delete aware invoice lists. */
+InvoiceSchema.index({ companyId: 1, deletedAt: 1, createdAt: -1 });
+InvoiceSchema.index({ companyId: 1, locationId: 1, deletedAt: 1, createdAt: -1 });

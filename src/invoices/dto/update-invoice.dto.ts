@@ -50,9 +50,14 @@ export class UpdateInvoiceDto {
   @IsString()
   notes?: string;
 
-  /** Standalone invoices only. */
+  /** Standalone invoices only for amount edits; taxMode may change on payment-bound too. */
   @IsOptional()
   @IsNumber()
   @Min(0)
   taxPercentage?: number;
+
+  /** included | excluded — recalculates subtotal / tax / total from the same base amount */
+  @IsOptional()
+  @IsString()
+  taxMode?: string;
 }

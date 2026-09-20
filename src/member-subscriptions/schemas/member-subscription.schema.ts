@@ -115,6 +115,23 @@ export class MemberSubscription {
     default: null,
   })
   mandateId: Types.ObjectId | null;
+
+  /**
+   * When the member promised to pay the remaining balance (partial payment).
+   * Used to sort the dues queue — nearest reminder first.
+   */
+  @Prop({ type: Date, default: null })
+  dueReminderDate: Date | null;
+
+  /**
+   * GST snapshot at subscription create — later gym-setting changes must not
+   * rewrite how this membership's amounts / invoices are taxed.
+   */
+  @Prop({ type: Number, default: null })
+  taxPercentage: number | null;
+
+  @Prop({ type: String, default: null })
+  taxMode: string | null;
 }
 
 export const MemberSubscriptionSchema =
@@ -137,3 +154,13 @@ MemberSubscriptionSchema.index({ companyId: 1, expiryDate: 1 });
 
 /** Per-member subscription history. */
 MemberSubscriptionSchema.index({ companyId: 1, memberId: 1, createdAt: -1 });
+
+/** Partial-payment dues queue: pending > 0, sort by reminder. */
+MemberSubscriptionSchema.index({
+  companyId: 1,
+  pendingAmount: 1,
+  dueReminderDate: 1,
+});
+
+/** Branch-scoped renewal / list windows. */
+MemberSubscriptionSchema.index({ companyId: 1, locationId: 1, expiryDate: 1 });

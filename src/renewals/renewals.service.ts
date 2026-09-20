@@ -17,6 +17,11 @@ import {
   EXPIRY_SOON_DAYS,
   EXPIRY_WINDOW_DAYS,
 } from '../config/renewals.config';
+import {
+  buildResult,
+  resolvePaging,
+  PaginationQueryDto,
+} from '../common/pagination/pagination';
 
 export interface RenewalQueueQuery {
   withinDays?: number;
@@ -24,6 +29,8 @@ export interface RenewalQueueQuery {
   expiredWithinDays?: number;
   status?: RenewalFollowUpStatus | 'OPEN' | 'ALL';
   locationId?: string;
+  page?: number;
+  limit?: number;
 }
 
 @Injectable()
@@ -34,7 +41,10 @@ export class RenewalsService {
     private readonly activityLogsService: ActivityLogsService,
   ) {}
 
-  async getQueue(companyId: string, query: RenewalQueueQuery = {}) {
+  private buildFilter(
+    companyId: string,
+    query: RenewalQueueQuery,
+  ): Record<string, unknown> {
     const withinDays = Number(query.withinDays ?? EXPIRY_SOON_DAYS);
     const includeExpired = query.includeExpired !== false;
     const expiredWithinDays = Number(
@@ -110,14 +120,36 @@ export class RenewalsService {
       filter.renewalFollowUpStatus = statusFilter;
     }
 
-    const rows = await this.memberSubscriptionModel
-      .find(filter)
-      .populate('memberId', 'name email phone')
-      .populate('planId', 'name price')
-      .sort({ expiryDate: 1 })
-      .exec();
+    return filter;
+  }
 
-    return rows.map((sub: any) => this.toQueueItem(sub, now));
+  async getQueue(companyId: string, query: RenewalQueueQuery = {}) {
+    const filter = this.buildFilter(companyId, query);
+    const pagingQuery: PaginationQueryDto = {
+      page: query.page ?? 1,
+      limit: query.limit ?? 50,
+    };
+    const { skip, limit } = resolvePaging(pagingQuery);
+    const now = new Date();
+
+    const [total, rows] = await Promise.all([
+      this.memberSubscriptionModel.countDocuments(filter).exec(),
+      this.memberSubscriptionModel
+        .find(filter)
+        .populate('memberId', 'name email phone')
+        .populate('planId', 'name price')
+        .sort({ expiryDate: 1 })
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .exec(),
+    ]);
+
+    return buildResult(
+      rows.map((sub: any) => this.toQueueItem(sub, now)),
+      total,
+      pagingQuery,
+    );
   }
 
   async getCounts(
@@ -126,59 +158,97 @@ export class RenewalsService {
     expiredWithinDays = EXPIRY_WINDOW_DAYS,
     locScope: { locationId?: string } = {},
   ) {
-    const items = await this.getQueue(companyId, {
+    const filter = this.buildFilter(companyId, {
       withinDays,
       includeExpired: true,
       expiredWithinDays,
       status: 'ALL',
       ...locScope,
     });
+    const now = new Date();
+    const startOfDay = new Date(now);
+    startOfDay.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(now);
+    endOfDay.setHours(23, 59, 59, 999);
 
-    const counts = {
-      total: items.length,
-      open: 0,
-      pending: 0,
-      contacted: 0,
-      promised: 0,
-      renewed: 0,
-      lost: 0,
-      skipped: 0,
-      expiringToday: 0,
-      expired: 0,
-      totalPendingAmount: 0,
-    };
+    const openStatuses = [
+      RenewalFollowUpStatus.PENDING,
+      RenewalFollowUpStatus.CONTACTED,
+      RenewalFollowUpStatus.PROMISED,
+    ];
 
-    for (const item of items) {
-      counts.totalPendingAmount += item.pendingAmount || 0;
-      if (item.daysRemaining <= 0) counts.expired += 1;
-      if (item.daysRemaining === 0) counts.expiringToday += 1;
+    const [facet] = await this.memberSubscriptionModel
+      .aggregate([
+        { $match: filter },
+        {
+          $addFields: {
+            followUp: {
+              $ifNull: [
+                '$renewalFollowUpStatus',
+                RenewalFollowUpStatus.PENDING,
+              ],
+            },
+          },
+        },
+        {
+          $facet: {
+            totals: [
+              {
+                $group: {
+                  _id: null,
+                  total: { $sum: 1 },
+                  totalPendingAmount: { $sum: '$pendingAmount' },
+                },
+              },
+            ],
+            byStatus: [
+              {
+                $group: {
+                  _id: '$followUp',
+                  n: { $sum: 1 },
+                },
+              },
+            ],
+            expired: [
+              { $match: { expiryDate: { $lt: startOfDay } } },
+              { $count: 'n' },
+            ],
+            expiringToday: [
+              {
+                $match: {
+                  expiryDate: { $gte: startOfDay, $lte: endOfDay },
+                },
+              },
+              { $count: 'n' },
+            ],
+            open: [
+              { $match: { followUp: { $in: openStatuses } } },
+              { $count: 'n' },
+            ],
+          },
+        },
+      ])
+      .exec();
 
-      switch (item.renewalFollowUpStatus) {
-        case RenewalFollowUpStatus.PENDING:
-          counts.pending += 1;
-          counts.open += 1;
-          break;
-        case RenewalFollowUpStatus.CONTACTED:
-          counts.contacted += 1;
-          counts.open += 1;
-          break;
-        case RenewalFollowUpStatus.PROMISED:
-          counts.promised += 1;
-          counts.open += 1;
-          break;
-        case RenewalFollowUpStatus.RENEWED:
-          counts.renewed += 1;
-          break;
-        case RenewalFollowUpStatus.LOST:
-          counts.lost += 1;
-          break;
-        case RenewalFollowUpStatus.SKIPPED:
-          counts.skipped += 1;
-          break;
-      }
+    const byStatus: Record<string, number> = {};
+    for (const row of facet?.byStatus ?? []) {
+      byStatus[row._id] = row.n;
     }
+    const totals = facet?.totals?.[0] ?? {};
 
-    return counts;
+    return {
+      total: totals.total ?? 0,
+      open: facet?.open?.[0]?.n ?? 0,
+      pending: byStatus[RenewalFollowUpStatus.PENDING] ?? 0,
+      contacted: byStatus[RenewalFollowUpStatus.CONTACTED] ?? 0,
+      promised: byStatus[RenewalFollowUpStatus.PROMISED] ?? 0,
+      renewed: byStatus[RenewalFollowUpStatus.RENEWED] ?? 0,
+      lost: byStatus[RenewalFollowUpStatus.LOST] ?? 0,
+      skipped: byStatus[RenewalFollowUpStatus.SKIPPED] ?? 0,
+      expiringToday: facet?.expiringToday?.[0]?.n ?? 0,
+      expired: facet?.expired?.[0]?.n ?? 0,
+      totalPendingAmount: totals.totalPendingAmount ?? 0,
+    };
   }
 
   async updateFollowUp(

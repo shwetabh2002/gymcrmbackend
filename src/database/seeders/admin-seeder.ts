@@ -5,8 +5,9 @@ import { Role } from '../../common/enums/role.enum';
 import { UserType } from '../../common/enums/user-type.enum';
 
 /**
- * Seeds platform SUPER_ADMIN (no company).
+ * Seeds / resets platform SUPER_ADMIN (no company).
  * Set SEED_SUPER_ADMIN_EMAIL + SEED_SUPER_ADMIN_PASSWORD.
+ * Re-running updates the password so local login always matches .env.
  */
 export async function seedAdminUser() {
   const UserModel = model<User>('User', UserSchema);
@@ -23,13 +24,18 @@ export async function seedAdminUser() {
     return;
   }
 
+  const hashedPassword = await bcrypt.hash(adminPassword, 10);
   const existing = await UserModel.findOne({ email: adminEmail });
+
   if (existing) {
-    console.log('Platform admin already exists');
+    existing.password = hashedPassword;
+    existing.role = Role.SUPER_ADMIN;
+    existing.userType = UserType.ADMIN;
+    await existing.save();
+    console.log(`SUPER_ADMIN password reset for ${adminEmail}`);
     return;
   }
 
-  const hashedPassword = await bcrypt.hash(adminPassword, 10);
   await new UserModel({
     email: adminEmail,
     password: hashedPassword,

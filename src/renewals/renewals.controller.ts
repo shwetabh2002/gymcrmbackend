@@ -36,6 +36,8 @@ export class RenewalsController {
     @Query('includeExpired') includeExpired?: string,
     @Query('expiredWithinDays') expiredWithinDays?: string,
     @Query('status') status?: RenewalFollowUpStatus | 'OPEN' | 'ALL',
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
     return this.renewalsService.getQueue(companyId, {
       withinDays: withinDays ? Number(withinDays) : undefined,
@@ -45,6 +47,8 @@ export class RenewalsController {
         ? Number(expiredWithinDays)
         : undefined,
       status,
+      page: page ? Number(page) : 1,
+      limit: limit ? Number(limit) : 50,
       ...locScope,
     });
   }

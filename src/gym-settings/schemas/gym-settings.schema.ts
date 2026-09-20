@@ -119,7 +119,7 @@ export class GymSettings {
   @Prop({ type: Boolean, default: false })
   autopayEnabled: boolean;
 
-  /** Mandate method the member approves: upi | emandate | card | nach. */
+  /** Mandate method the member approves. Currently UPI Autopay only. */
   @Prop({ type: String, default: 'upi' })
   autopayMethod: string;
 

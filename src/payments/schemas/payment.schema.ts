@@ -97,3 +97,7 @@ PaymentSchema.index({ companyId: 1, providerRef: 1 });
 
 /** Revenue aggregations slice by date within a company. */
 PaymentSchema.index({ companyId: 1, paymentDate: -1 });
+
+/** Soft-delete aware ledger lists. */
+PaymentSchema.index({ companyId: 1, deletedAt: 1, createdAt: -1 });
+PaymentSchema.index({ companyId: 1, locationId: 1, deletedAt: 1, createdAt: -1 });

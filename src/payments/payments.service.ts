@@ -386,13 +386,21 @@ export class PaymentsService {
         .findOne({ companyId })
         .lean()
         .exec();
-      const taxPercentage =
+      const livePercentage =
         typeof (settings as any)?.invoiceTaxPercentage === 'number'
           ? (settings as any).invoiceTaxPercentage
           : DEFAULT_INVOICE_TAX_PERCENTAGE;
-      const taxMode = isInvoiceTaxMode((settings as any)?.invoiceTaxMode)
+      const liveMode = isInvoiceTaxMode((settings as any)?.invoiceTaxMode)
         ? (settings as any).invoiceTaxMode
         : DEFAULT_INVOICE_TAX_MODE;
+
+      // Prefer the membership's tax snapshot so later setting changes don't
+      // re-tax historical cycles.
+      const snapPct = (subscriptionWithPlan as any)?.taxPercentage;
+      const snapMode = (subscriptionWithPlan as any)?.taxMode;
+      const taxPercentage =
+        typeof snapPct === 'number' ? snapPct : livePercentage;
+      const taxMode = isInvoiceTaxMode(snapMode) ? snapMode : liveMode;
 
       const breakdown = computeTaxBreakdown(
         payment.amount,
@@ -646,43 +654,41 @@ export class PaymentsService {
           delta,
         );
 
-        const settings = await this.gymSettingsModel
-          .findOne({ companyId })
-          .lean()
+        // Keep each linked invoice's own tax snapshot (do not re-read live settings).
+        const linkedInvoices = await this.invoiceModel
+          .find({
+            companyId,
+            paymentId: payment._id as any,
+            deletedAt: null,
+          })
           .exec();
-        const taxPercentage =
-          typeof (settings as any)?.invoiceTaxPercentage === 'number'
-            ? (settings as any).invoiceTaxPercentage
-            : DEFAULT_INVOICE_TAX_PERCENTAGE;
-        const taxMode = isInvoiceTaxMode((settings as any)?.invoiceTaxMode)
-          ? (settings as any).invoiceTaxMode
-          : DEFAULT_INVOICE_TAX_MODE;
-        const breakdown = computeTaxBreakdown(
-          nextAmount,
-          taxPercentage,
-          taxMode,
-        );
         const planName = (subscription as any).planId?.name || 'Membership';
-        await this.invoiceModel
-          .updateMany(
-            { companyId, paymentId: payment._id as any, deletedAt: null },
+        for (const inv of linkedInvoices) {
+          const taxPercentage =
+            typeof inv.taxPercentage === 'number'
+              ? inv.taxPercentage
+              : DEFAULT_INVOICE_TAX_PERCENTAGE;
+          const taxMode = isInvoiceTaxMode(inv.taxMode)
+            ? inv.taxMode
+            : DEFAULT_INVOICE_TAX_MODE;
+          const breakdown = computeTaxBreakdown(
+            nextAmount,
+            taxPercentage,
+            taxMode,
+          );
+          inv.subtotal = breakdown.subtotal;
+          inv.taxPercentage = breakdown.taxPercentage;
+          inv.taxAmount = breakdown.taxAmount;
+          inv.taxMode = breakdown.taxMode;
+          inv.totalAmount = breakdown.totalAmount;
+          inv.items = [
             {
-              $set: {
-                subtotal: breakdown.subtotal,
-                taxPercentage: breakdown.taxPercentage,
-                taxAmount: breakdown.taxAmount,
-                taxMode: breakdown.taxMode,
-                totalAmount: breakdown.totalAmount,
-                items: [
-                  {
-                    description: `${planName} - Payment`,
-                    amount: breakdown.subtotal,
-                  },
-                ],
-              },
+              description: `${planName} - Payment`,
+              amount: breakdown.subtotal,
             },
-          )
-          .exec();
+          ];
+          await inv.save();
+        }
       }
     }
 

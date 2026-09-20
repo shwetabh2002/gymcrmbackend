@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
   ValidateIf,
 } from 'class-validator';
@@ -22,10 +23,18 @@ export class CreateMemberDto {
   @IsNotEmpty()
   name: string;
 
-  /** Frontend uses contactNumber; also accept phone */
+  /** Local contact — normalized to exactly 10 digits in the service. */
   @IsString()
   @IsNotEmpty()
   phone: string;
+
+  /** e.g. +91 — stored separately from phone. Default applied in service. */
+  @IsString()
+  @IsOptional()
+  @Matches(/^\+\d{1,4}$/, {
+    message: 'Country code must look like +91',
+  })
+  countryCode?: string;
 
   @ValidateIf((_, v) => v != null && String(v).trim() !== '')
   @IsEmail()
@@ -115,4 +124,12 @@ export class CreateMemberDto {
   @IsBoolean()
   @IsOptional()
   sendWhatsApp?: boolean;
+
+  /**
+   * When the member said they will pay the remaining balance.
+   * Only meaningful when received < plan amount (partial).
+   */
+  @IsDateString()
+  @IsOptional()
+  dueReminderDate?: string;
 }

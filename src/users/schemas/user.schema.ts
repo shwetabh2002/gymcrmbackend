@@ -45,8 +45,13 @@ export class User {
   notes: string | null;
 
   // Member-specific fields (only populated if userType = MEMBER)
+  /** Local contact number only — exactly 10 digits, no country code. */
   @Prop({ type: String, default: null })
   phone: string | null;
+
+  /** Dial prefix stored separately, e.g. +91. */
+  @Prop({ type: String, default: '+91' })
+  countryCode: string;
 
   @Prop({ type: String, default: null })
   address: string | null;

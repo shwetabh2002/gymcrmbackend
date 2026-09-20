@@ -44,4 +44,12 @@ export class CreateMemberSubscriptionDto {
   @IsBoolean()
   @IsOptional()
   replaceActive?: boolean;
+
+  /**
+   * When initialPayment < plan price — date the member promised to pay the rest.
+   * Required for partial / unpaid assign & renew.
+   */
+  @IsDateString()
+  @IsOptional()
+  dueReminderDate?: string;
 }

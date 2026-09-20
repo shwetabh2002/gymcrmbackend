@@ -30,6 +30,12 @@ import {
 } from '../activity-logs/activity-logs.service';
 import { PaymentsService } from '../payments/payments.service';
 import { CompanyContextService } from '../common/company-context/company-context.service';
+import { GymSettingsService } from '../gym-settings/gym-settings.service';
+import {
+  DEFAULT_INVOICE_TAX_MODE,
+  DEFAULT_INVOICE_TAX_PERCENTAGE,
+  isInvoiceTaxMode,
+} from '../invoices/tax.util';
 import {
   MAX_PAGE_SIZE,
   PaginatedResult,
@@ -57,6 +63,7 @@ export class MemberSubscriptionsService {
     @Inject(forwardRef(() => PaymentsService))
     private paymentsService: PaymentsService,
     private companyContext: CompanyContextService,
+    private gymSettingsService: GymSettingsService,
   ) {}
 
   async create(
@@ -105,7 +112,7 @@ export class MemberSubscriptionsService {
 
     if (activeSubscription) {
       if (createDto.replaceActive) {
-        activeSubscription.subscriptionStatus = SubscriptionStatus.CANCELLED;
+        activeSubscription.subscriptionStatus = SubscriptionStatus.ENDED;
         await activeSubscription.save();
       } else {
         throw new ConflictException(
@@ -115,6 +122,25 @@ export class MemberSubscriptionsService {
     }
 
     const startDate = new Date(createDto.startDate);
+    // Renew must not start before the previous cycle ends (no overlap).
+    const priorForFloor =
+      activeSubscription ||
+      (await this.memberSubscriptionModel
+        .findOne({ companyId, memberId: createDto.memberId as any })
+        .sort({ expiryDate: -1 })
+        .exec());
+    if (priorForFloor?.expiryDate) {
+      const floor = new Date(priorForFloor.expiryDate);
+      floor.setHours(0, 0, 0, 0);
+      const startDay = new Date(startDate);
+      startDay.setHours(0, 0, 0, 0);
+      if (startDay.getTime() < floor.getTime()) {
+        throw new BadRequestException(
+          `Renew start date cannot be before previous end date (${floor.toISOString().slice(0, 10)})`,
+        );
+      }
+    }
+
     const expiryDate = createDto.expiryDate
       ? new Date(createDto.expiryDate)
       : MemberSubscriptionsService.addPlanDuration(
@@ -133,7 +159,23 @@ export class MemberSubscriptionsService {
       );
     }
 
+    const willHavePending = initialPayment < plan.price;
+    if (willHavePending && !createDto.dueReminderDate) {
+      throw new BadRequestException(
+        'Due reminder date is required when there is a pending balance',
+      );
+    }
+
     // Start unpaid; PaymentsService.applyPaymentDelta + invoice if money collected
+    const gymSettings = await this.gymSettingsService.get(companyId);
+    const taxPercentage =
+      typeof (gymSettings as any)?.invoiceTaxPercentage === 'number'
+        ? (gymSettings as any).invoiceTaxPercentage
+        : DEFAULT_INVOICE_TAX_PERCENTAGE;
+    const taxMode = isInvoiceTaxMode((gymSettings as any)?.invoiceTaxMode)
+      ? (gymSettings as any).invoiceTaxMode
+      : DEFAULT_INVOICE_TAX_MODE;
+
     const subscription = new this.memberSubscriptionModel({
       companyId,
       locationId,
@@ -146,6 +188,11 @@ export class MemberSubscriptionsService {
       totalPaid: 0,
       pendingAmount: plan.price,
       paymentStatus: PaymentStatus.UNPAID,
+      taxPercentage,
+      taxMode,
+      dueReminderDate: willHavePending
+        ? new Date(createDto.dueReminderDate!)
+        : null,
     });
 
     const savedSubscription = await subscription.save();
@@ -374,6 +421,7 @@ export class MemberSubscriptionsService {
     if (updateDto.subscriptionStatus) {
       if (
         updateDto.subscriptionStatus === SubscriptionStatus.EXPIRED ||
+        updateDto.subscriptionStatus === SubscriptionStatus.ENDED ||
         updateDto.subscriptionStatus === SubscriptionStatus.CANCELLED
       ) {
         await this.userModel
@@ -389,16 +437,18 @@ export class MemberSubscriptionsService {
       }
     }
 
-    const {
-      companyId: _ignore,
-      locationId: _loc,
-      ...safeUpdate
-    } = updateDto as any;
+    if (updateDto.dueReminderDate !== undefined) {
+      subscription.dueReminderDate = updateDto.dueReminderDate
+        ? new Date(updateDto.dueReminderDate)
+        : null;
+    }
+    if (updateDto.subscriptionStatus) {
+      subscription.subscriptionStatus = updateDto.subscriptionStatus;
+    }
+    await subscription.save();
 
     const updatedSubscription = await this.memberSubscriptionModel
-      .findOneAndUpdate({ _id: id, companyId }, safeUpdate, {
-        returnDocument: 'after',
-      })
+      .findOne({ _id: id, companyId })
       .populate('memberId', '-password -refreshToken')
       .populate('planId')
       .exec();
@@ -552,7 +602,7 @@ export class MemberSubscriptionsService {
       .findOne({ _id: sub.planId, companyId })
       .exec();
 
-    const cycleStart = new Date(Math.max(sub.expiryDate.getTime(), Date.now()));
+    const cycleStart = new Date(sub.expiryDate);
     const nextExpiry = plan
       ? MemberSubscriptionsService.addPlanDuration(
           cycleStart,
@@ -653,6 +703,24 @@ export class MemberSubscriptionsService {
                   ],
                   default: PaymentStatus.UNPAID,
                 },
+              },
+              // Clear reminder once fully paid — nothing left to chase.
+              dueReminderDate: {
+                $cond: [
+                  {
+                    $lte: [
+                      {
+                        $subtract: [
+                          { $ifNull: ['$planPrice', 0] },
+                          '$totalPaid',
+                        ],
+                      },
+                      0,
+                    ],
+                  },
+                  null,
+                  '$dueReminderDate',
+                ],
               },
               updatedAt: new Date(),
             },

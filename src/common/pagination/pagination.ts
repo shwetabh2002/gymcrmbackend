@@ -57,6 +57,11 @@ export class MemberListQueryDto extends PaginationQueryDto {
   @IsOptional()
   @IsString()
   trainingType?: string;
+
+  /** When "true", only members whose current plan has pendingAmount > 0 */
+  @IsOptional()
+  @IsString()
+  hasPending?: string;
 }
 
 /** Payments list filters. */
@@ -69,7 +74,7 @@ export class PaymentListQueryDto extends PaginationQueryDto {
 
 /** Subscriptions list filters. */
 export class SubscriptionListQueryDto extends PaginationQueryDto {
-  /** ACTIVE | EXPIRING_SOON | EXPIRED | CANCELLED */
+  /** ACTIVE | EXPIRING_SOON | EXPIRED | ENDED | CANCELLED */
   @IsOptional()
   @IsString()
   status?: string;

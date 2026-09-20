@@ -10,6 +10,7 @@ import {
   HttpStatus,
   UseGuards,
   Request,
+  Query,
 } from '@nestjs/common';
 import { InvoicesService } from './invoices.service';
 import { CreateInvoiceDto } from './dto/create-invoice.dto';
@@ -21,6 +22,7 @@ import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { LocationScope } from '../common/tenant/location.decorator';
 import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
+import { PaginationQueryDto } from '../common/pagination/pagination';
 
 @Controller('invoices')
 @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
@@ -55,8 +57,9 @@ export class InvoicesController {
   async findAll(
     @CompanyId() companyId: string,
     @LocationScope() locScope: { locationId?: string },
+    @Query() query: PaginationQueryDto & { taxMode?: string },
   ) {
-    return this.invoicesService.findAll(companyId, locScope);
+    return this.invoicesService.findAll(companyId, locScope, query);
   }
 
   @Get(':id')

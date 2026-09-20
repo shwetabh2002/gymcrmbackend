@@ -150,7 +150,7 @@ export class AnalyticsService {
         {
           $match: {
             ...tenant,
-            subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+            subscriptionStatus: { $nin: [SubscriptionStatus.CANCELLED, SubscriptionStatus.ENDED] },
           },
         },
         {
@@ -163,7 +163,7 @@ export class AnalyticsService {
       this.memberSubscriptionModel
         .countDocuments({
           ...tenant,
-          subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+          subscriptionStatus: { $nin: [SubscriptionStatus.CANCELLED, SubscriptionStatus.ENDED] },
           pendingAmount: { $gt: 0 },
         })
         .exec(),
@@ -264,7 +264,7 @@ export class AnalyticsService {
       this.memberSubscriptionModel
         .find({
           ...tenant,
-          subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+          subscriptionStatus: { $nin: [SubscriptionStatus.CANCELLED, SubscriptionStatus.ENDED] },
           pendingAmount: { $gt: 0 },
         })
         .populate('memberId', 'name email phone')
@@ -542,7 +542,7 @@ export class AnalyticsService {
       {
         $match: {
           ...tenant,
-          subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+          subscriptionStatus: { $nin: [SubscriptionStatus.CANCELLED, SubscriptionStatus.ENDED] },
           pendingAmount: { $gt: 0 },
         },
       },
@@ -620,7 +620,7 @@ export class AnalyticsService {
         {
           $match: {
             ...tenant,
-            subscriptionStatus: { $ne: SubscriptionStatus.CANCELLED },
+            subscriptionStatus: { $nin: [SubscriptionStatus.CANCELLED, SubscriptionStatus.ENDED] },
           },
         },
         {

@@ -48,6 +48,11 @@ import {
   resolvePaging,
   searchRegex,
 } from '../common/pagination/pagination';
+import {
+  DEFAULT_MEMBER_COUNTRY_CODE,
+  normalizeCountryCode,
+  normalizeLocalPhone,
+} from '../common/phone/member-phone';
 
 type LocScope = { locationId?: string };
 
@@ -82,8 +87,10 @@ export class MembersService {
   ) {
     await this.locationsService.assertBelongsToCompany(companyId, locationId);
 
-    const phone = createDto.phone?.trim();
-    if (!phone) throw new BadRequestException('Phone is required');
+    const countryCode = normalizeCountryCode(
+      createDto.countryCode ?? DEFAULT_MEMBER_COUNTRY_CODE,
+    );
+    const phone = normalizeLocalPhone(createDto.phone ?? '', countryCode);
 
     // No synthetic @members.local — leave email empty when not provided
     const emailRaw = createDto.email?.trim().toLowerCase();
@@ -132,6 +139,7 @@ export class MembersService {
       name: createDto.name,
       email,
       phone,
+      countryCode,
       address: createDto.address ?? null,
       emergencyContact: createDto.emergencyContact ?? null,
       memberStatus: createDto.memberStatus || MemberStatus.ACTIVE,
@@ -304,6 +312,22 @@ export class MembersService {
     }
 
     // Start unpaid; PaymentsService updates totals + generates invoice
+    const willHavePending = received < planPrice;
+    if (willHavePending && !createDto.dueReminderDate) {
+      throw new BadRequestException(
+        'Due reminder date is required when there is a pending balance',
+      );
+    }
+    const gymSettings = await this.gymSettingsService.get(companyId);
+    const taxPercentage =
+      typeof (gymSettings as any)?.invoiceTaxPercentage === 'number'
+        ? (gymSettings as any).invoiceTaxPercentage
+        : 0;
+    const taxMode =
+      (gymSettings as any)?.invoiceTaxMode === 'included' ||
+      (gymSettings as any)?.invoiceTaxMode === 'excluded'
+        ? (gymSettings as any).invoiceTaxMode
+        : 'excluded';
     const subscription = new this.memberSubscriptionModel({
       companyId,
       locationId,
@@ -316,6 +340,11 @@ export class MembersService {
       totalPaid: 0,
       pendingAmount: planPrice,
       paymentStatus: PaymentStatus.UNPAID,
+      taxPercentage,
+      taxMode,
+      dueReminderDate: willHavePending
+        ? new Date(createDto.dueReminderDate!)
+        : null,
     });
     const savedSubscription = await subscription.save();
 
@@ -371,6 +400,24 @@ export class MembersService {
       filter.trainingType = query.trainingType;
     }
 
+    const wantPending =
+      query?.hasPending === 'true' || query?.hasPending === '1';
+    if (wantPending) {
+      const pendingSubs = await this.memberSubscriptionModel
+        .find({
+          companyId,
+          pendingAmount: { $gt: 0 },
+          ...(locScope.locationId
+            ? { locationId: locScope.locationId }
+            : {}),
+        })
+        .select('_id dueReminderDate')
+        .lean()
+        .exec();
+      const ids = pendingSubs.map((s) => s._id);
+      filter.currentSubscriptionId = { $in: ids.length ? ids : [] };
+    }
+
     // Searching in the database instead of shipping every member to the browser
     // to filter there.
     const term = searchRegex(query?.search);
@@ -383,8 +430,13 @@ export class MembersService {
       ];
     }
 
-    const listQuery = () =>
-      this.userModel
+    // Partial-dues view: nearest reminder first; otherwise newest members.
+    const sortSpec = wantPending
+      ? undefined
+      : ({ createdAt: -1 } as const);
+
+    const listQuery = () => {
+      const q = this.userModel
         .find(filter)
         .select('-password -refreshToken')
         .populate({
@@ -401,8 +453,30 @@ export class MembersService {
           path: 'salesPersonId',
           strictPopulate: false,
           select: 'name',
-        })
-        .sort({ createdAt: -1 });
+        });
+      if (sortSpec) {
+        q.sort(sortSpec);
+      }
+      return q;
+    };
+
+    const mapAndMaybeSort = (rows: any[]) => {
+      const mapped = rows.map((m) => this.toClientMember(m));
+      if (!wantPending) return mapped;
+      // Nearest due reminder first; members without a date sink to the bottom.
+      return mapped.sort((a, b) => {
+        const da = a.dueReminderDate
+          ? new Date(a.dueReminderDate).getTime()
+          : null;
+        const db = b.dueReminderDate
+          ? new Date(b.dueReminderDate).getTime()
+          : null;
+        if (da == null && db == null) return 0;
+        if (da == null) return 1;
+        if (db == null) return -1;
+        return da - db;
+      });
+    };
 
     if (!isPaged(query)) {
       const rows = await listQuery()
@@ -412,23 +486,26 @@ export class MembersService {
         this.logger.warn(
           `Unpaged members list for company ${companyId} exceeded ${UNPAGED_SAFETY_LIMIT} rows — the caller should page`,
         );
-        return rows
-          .slice(0, UNPAGED_SAFETY_LIMIT)
-          .map((m) => this.toClientMember(m));
+        return mapAndMaybeSort(rows.slice(0, UNPAGED_SAFETY_LIMIT));
       }
-      return rows.map((m) => this.toClientMember(m));
+      return mapAndMaybeSort(rows);
     }
 
     const { skip, limit } = resolvePaging(query);
+    if (wantPending) {
+      // Sort by reminder after load — fetch matching ids, sort in memory, then page.
+      const allRows = await listQuery().exec();
+      const sorted = mapAndMaybeSort(allRows);
+      const total = sorted.length;
+      const pageItems = sorted.slice(skip, skip + limit);
+      return buildResult(pageItems, total, query);
+    }
+
     const [rows, total] = await Promise.all([
       listQuery().skip(skip).limit(limit).exec(),
       this.userModel.countDocuments(filter).exec(),
     ]);
-    return buildResult(
-      rows.map((m) => this.toClientMember(m)),
-      total,
-      query,
-    );
+    return buildResult(mapAndMaybeSort(rows), total, query);
   }
 
   async findById(companyId: string, id: string, locScope: LocScope = {}) {
@@ -478,22 +555,35 @@ export class MembersService {
     }
 
     const patch: Record<string, unknown> = { ...updateDto };
-    if ((updateDto as any).phone) {
-      const phone = String((updateDto as any).phone).trim();
-      const phoneClash = await this.userModel
-        .findOne({
-          companyId,
-          userType: UserType.MEMBER,
-          phone,
-          _id: { $ne: id },
-        })
+    if (updateDto.countryCode !== undefined || updateDto.phone !== undefined) {
+      const existing = await this.userModel
+        .findOne({ _id: id, companyId, userType: UserType.MEMBER })
+        .select('phone countryCode')
+        .lean()
         .exec();
-      if (phoneClash) {
-        throw new ConflictException(
-          `Phone ${phone} is already registered for a member`,
-        );
+      const countryCode = normalizeCountryCode(
+        updateDto.countryCode ??
+          (existing as any)?.countryCode ??
+          DEFAULT_MEMBER_COUNTRY_CODE,
+      );
+      patch.countryCode = countryCode;
+      if (updateDto.phone !== undefined) {
+        const phone = normalizeLocalPhone(updateDto.phone, countryCode);
+        const phoneClash = await this.userModel
+          .findOne({
+            companyId,
+            userType: UserType.MEMBER,
+            phone,
+            _id: { $ne: id },
+          })
+          .exec();
+        if (phoneClash) {
+          throw new ConflictException(
+            `Phone ${phone} is already registered for a member`,
+          );
+        }
+        patch.phone = phone;
       }
-      patch.phone = phone;
     }
     if ((updateDto as any).registrationDate) {
       patch.registrationDate = new Date((updateDto as any).registrationDate);
@@ -637,6 +727,7 @@ export class MembersService {
       email: member.email ?? null,
       phone: member.phone,
       contactNumber: member.phone,
+      countryCode: member.countryCode || DEFAULT_MEMBER_COUNTRY_CODE,
       address: member.address,
       emergencyContact: member.emergencyContact,
       memberStatus: member.memberStatus,
@@ -657,6 +748,12 @@ export class MembersService {
       amount: sub?.planPrice ?? null,
       received: sub?.totalPaid ?? null,
       pending: sub?.pendingAmount ?? null,
+      dueReminderDate: sub?.dueReminderDate
+        ? new Date(sub.dueReminderDate).toISOString()
+        : null,
+      taxPercentage:
+        typeof sub?.taxPercentage === 'number' ? sub.taxPercentage : null,
+      taxMode: sub?.taxMode ?? null,
       mop: null,
       startingDate: sub?.startDate ?? null,
       expiryDate: sub?.expiryDate ?? null,

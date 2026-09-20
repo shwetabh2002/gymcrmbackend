@@ -28,6 +28,11 @@ import {
 } from '../member-subscriptions/schemas/member-subscription.schema';
 import { UserType } from '../common/enums/user-type.enum';
 import { Role } from '../common/enums/role.enum';
+import {
+  DEFAULT_MEMBER_COUNTRY_CODE,
+  normalizeCountryCode,
+  normalizeLocalPhone,
+} from '../common/phone/member-phone';
 import { MemberStatus } from '../common/enums/member-status.enum';
 import {
   MemberOnboardingStatus,
@@ -56,10 +61,8 @@ import {
   DEFAULT_MANDATE_VALIDITY_MONTHS,
 } from '../config/autopay.config';
 import {
-  DEFAULT_MANDATE_METHOD,
   MANDATE_MAX_AMOUNT_BY_METHOD,
   MandateMethod,
-  isMandateMethod,
   toMinorUnits,
 } from '../config/razorpay.config';
 import {
@@ -85,9 +88,8 @@ export function resolveMandateTerms(
     Number(settings?.autopayMandateValidityMonths) > 0
       ? Number(settings.autopayMandateValidityMonths)
       : DEFAULT_MANDATE_VALIDITY_MONTHS;
-  const method = isMandateMethod(settings?.autopayMethod)
-    ? settings.autopayMethod
-    : DEFAULT_MANDATE_METHOD;
+  // Product: UPI Autopay only (e-Mandate / card / NACH not offered).
+  const method: MandateMethod = 'upi';
 
   // Never ask for more headroom than the instrument's scheme allows.
   const requested = Math.ceil(Math.max(Number(planPrice) || 0, 1) * multiplier);
@@ -140,7 +142,10 @@ export class CheckoutService {
       if (existing) return this.toClient(existing);
     }
 
-    const phone = dto.phone.trim();
+    const countryCode = normalizeCountryCode(
+      (dto as any).countryCode ?? DEFAULT_MEMBER_COUNTRY_CODE,
+    );
+    const phone = normalizeLocalPhone(dto.phone, countryCode);
     const phoneClash = await this.userModel
       .findOne({ companyId, userType: UserType.MEMBER, phone })
       .exec();
@@ -191,6 +196,8 @@ export class CheckoutService {
     ) {
       draft = phoneClash;
       draft.name = dto.name.trim();
+      draft.phone = phone;
+      (draft as any).countryCode = countryCode;
       if (dto.email?.trim()) draft.email = dto.email.trim().toLowerCase();
       draft.locationId = new Types.ObjectId(dto.locationId) as any;
       await draft.save();
@@ -199,6 +206,7 @@ export class CheckoutService {
         name: dto.name.trim(),
         email: dto.email?.trim().toLowerCase() || null,
         phone,
+        countryCode,
         password: 'N/A',
         userType: UserType.MEMBER,
         role: Role.USER,

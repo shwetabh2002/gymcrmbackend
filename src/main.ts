@@ -1,7 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { getConnectionToken } from '@nestjs/mongoose';
 import { AppModule } from './app.module';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { Connection } from 'mongoose';
 import helmet from 'helmet';
 import { RuntimeService } from './common/runtime/runtime.service';
 
@@ -19,6 +21,18 @@ async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
   });
+
+  // Explicit boot-time Mongo status (connectionFactory events can be missed).
+  const mongo = app.get<Connection>(getConnectionToken());
+  if (mongo.readyState === 1) {
+    logger.log(
+      `✅ MongoDB connected successfully · db=${mongo.name} · host=${mongo.host ?? 'n/a'}`,
+    );
+  } else {
+    logger.error(
+      `❌ MongoDB not connected at boot (readyState=${mongo.readyState}; expected 1)`,
+    );
+  }
 
   // Refuse to run a production server on development secrets / mock providers.
   const runtime = app.get(RuntimeService);

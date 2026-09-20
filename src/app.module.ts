@@ -14,6 +14,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { InvoicesModule } from './invoices/invoices.module';
 import { AnalyticsModule } from './analytics/analytics.module';
 import { RenewalsModule } from './renewals/renewals.module';
+import { DuesModule } from './dues/dues.module';
 import { EmployeesModule } from './employees/employees.module';
 import { GymSettingsModule } from './gym-settings/gym-settings.module';
 import { ActivityLogsModule } from './activity-logs/activity-logs.module';
@@ -63,23 +64,41 @@ import { GLOBAL_THROTTLE } from './config/throttle.config';
         return {
           uri: mongoUri,
           connectionFactory: (connection) => {
-            connection.on('connected', () => {
-              logger.log('✅ MongoDB connected successfully!');
+            let loggedOnce = false;
+            const logConnected = (reason: string) => {
+              if (loggedOnce) return;
+              loggedOnce = true;
+              logger.log(`✅ MongoDB connected successfully (${reason})`);
               logger.log(`📊 Database: ${connection.name}`);
-              logger.log(`🏠 Host: ${connection.host}`);
-              logger.log(`🔌 Port: ${connection.port}`);
-            });
+              const host =
+                connection.host != null
+                  ? `${connection.host}${connection.port != null ? `:${connection.port}` : ''}`
+                  : 'n/a';
+              logger.log(`🏠 Host: ${host}`);
+              logger.log(`🔌 readyState: ${connection.readyState} (1=connected)`);
+            };
+
+            // Mongoose often finishes connecting before listeners attach, so
+            // the 'connected' event never fires on first boot — check now.
+            if (connection.readyState === 1) {
+              logConnected('already open');
+            }
+
+            connection.on('connected', () => logConnected('connected event'));
+            connection.on('open', () => logConnected('open event'));
 
             connection.on('disconnected', () => {
+              loggedOnce = false;
               logger.warn('⚠️  MongoDB disconnected');
             });
 
-            connection.on('error', (error) => {
-              logger.error('❌ MongoDB connection error:', error.message);
+            connection.on('error', (error: Error) => {
+              logger.error(`❌ MongoDB connection error: ${error.message}`);
             });
 
             connection.on('reconnected', () => {
-              logger.log('🔄 MongoDB reconnected');
+              loggedOnce = false;
+              logConnected('reconnected');
             });
 
             return connection;
@@ -101,6 +120,7 @@ import { GLOBAL_THROTTLE } from './config/throttle.config';
     InvoicesModule,
     AnalyticsModule,
     RenewalsModule,
+    DuesModule,
     EmployeesModule,
     GymSettingsModule,
     ActivityLogsModule,

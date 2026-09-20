@@ -13,6 +13,7 @@ import {
 } from '../subscription-plans/schemas/subscription-plan.schema';
 import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
 import { PaymentsModule } from '../payments/payments.module';
+import { GymSettingsModule } from '../gym-settings/gym-settings.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { PaymentsModule } from '../payments/payments.module';
       { name: SubscriptionPlan.name, schema: SubscriptionPlanSchema },
     ]),
     ActivityLogsModule,
+    GymSettingsModule,
     forwardRef(() => PaymentsModule),
   ],
   providers: [MemberSubscriptionsService],

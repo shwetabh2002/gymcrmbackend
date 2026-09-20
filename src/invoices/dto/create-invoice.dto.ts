@@ -41,6 +41,11 @@ export class CreateInvoiceDto {
   @Min(0)
   taxPercentage?: number;
 
+  /** included | excluded — defaults to subscription snapshot or gym settings */
+  @IsOptional()
+  @IsString()
+  taxMode?: string;
+
   @IsNotEmpty()
   @IsDateString()
   invoiceDate: string;

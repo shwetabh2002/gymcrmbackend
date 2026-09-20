@@ -7,6 +7,7 @@ import {
 } from './schemas/subscription-plan.schema';
 import { CreateSubscriptionPlanDto } from './dto/create-subscription-plan.dto';
 import { UpdateSubscriptionPlanDto } from './dto/update-subscription-plan.dto';
+import { PlanStatus } from '../common/enums/plan-status.enum';
 
 @Injectable()
 export class SubscriptionPlansService {
@@ -62,12 +63,18 @@ export class SubscriptionPlansService {
     return plan;
   }
 
-  async delete(companyId: string, id: string): Promise<void> {
-    const result = await this.subscriptionPlanModel
-      .findOneAndDelete({ _id: id, companyId })
+  async delete(companyId: string, id: string): Promise<SubscriptionPlanDocument> {
+    // Soft-delete only — flip status, never remove the document.
+    const plan = await this.subscriptionPlanModel
+      .findOneAndUpdate(
+        { _id: id, companyId },
+        { status: PlanStatus.ARCHIVED },
+        { returnDocument: 'after' },
+      )
       .exec();
-    if (!result) {
+    if (!plan) {
       throw new NotFoundException(`Subscription plan with ID ${id} not found`);
     }
+    return plan;
   }
 }

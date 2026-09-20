@@ -149,7 +149,7 @@ export class UpdateGymSettingsDto {
 
   /** Mandate method the member approves. */
   @IsOptional()
-  @IsIn(['upi', 'emandate', 'card', 'nach'])
+  @IsIn(['upi'])
   autopayMethod?: string;
 
   /** Per-debit ceiling multiplier over the plan price (1–10). */

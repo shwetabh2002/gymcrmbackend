@@ -5,6 +5,7 @@ import {
   IsMongoId,
   IsOptional,
   IsString,
+  Matches,
   ValidateIf,
 } from 'class-validator';
 import { MemberStatus } from '../../common/enums/member-status.enum';
@@ -23,6 +24,13 @@ export class UpdateMemberDto {
   @IsString()
   @IsOptional()
   phone?: string;
+
+  @IsString()
+  @IsOptional()
+  @Matches(/^\+\d{1,4}$/, {
+    message: 'Country code must look like +91',
+  })
+  countryCode?: string;
 
   @IsString()
   @IsOptional()
