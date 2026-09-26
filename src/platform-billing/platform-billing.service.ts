@@ -32,6 +32,10 @@ import { Company, CompanyDocument } from '../companies/schemas/company.schema';
 import { CountersService } from '../counters/counters.service';
 import { DAY_MS, addDays, daysBetween } from '../config/time.constants';
 import { RuntimeService } from '../common/runtime/runtime.service';
+import {
+  GymSettings,
+  GymSettingsDocument,
+} from '../gym-settings/schemas/gym-settings.schema';
 
 /** What every caller needs to know about a gym's standing, in one shape. */
 export type BillingSnapshot = {
@@ -72,10 +76,32 @@ export class PlatformBillingService {
     private locationModel: Model<LocationDocument>,
     @InjectModel(Company.name)
     private companyModel: Model<CompanyDocument>,
+    @InjectModel(GymSettings.name)
+    private gymSettingsModel: Model<GymSettingsDocument>,
     private plans: PlatformPlansService,
     private counters: CountersService,
     private runtime: RuntimeService,
   ) {}
+
+
+  /** Plan features plus SUPER_ADMIN gym-level unlocks (Autopay / WA / Email). */
+  private async effectiveFeatures(
+    companyId: string,
+    planFeatures: PlatformFeature[],
+  ): Promise<PlatformFeature[]> {
+    const features = new Set<PlatformFeature>(planFeatures || []);
+    const settings = await this.gymSettingsModel
+      .findOne({ companyId: new Types.ObjectId(companyId) })
+      .select(
+        'featureAutopayUnlocked featureWhatsappUnlocked featureEmailTemplatesUnlocked',
+      )
+      .lean()
+      .exec();
+    if (settings?.featureAutopayUnlocked) features.add('AUTOPAY');
+    if (settings?.featureWhatsappUnlocked) features.add('WHATSAPP_CLOUD');
+    if (settings?.featureEmailTemplatesUnlocked) features.add('EMAIL_TEMPLATES');
+    return [...features];
+  }
 
   // ───────────────────────── Lifecycle ─────────────────────────
 
@@ -94,6 +120,11 @@ export class PlatformBillingService {
     const plan = planCode
       ? await this.plans.findByCode(planCode)
       : await this.defaultPlan();
+    if ((plan as any).isContactSales === true) {
+      throw new BadRequestException(
+        'Custom is sales-led — start on Starter or Growth, then submit a Custom inquiry.',
+      );
+    }
 
     const trialDays = plan.trialDays ?? DEFAULT_TRIAL_DAYS;
     const trialEndsAt = addDays(new Date(), trialDays);
@@ -116,15 +147,17 @@ export class PlatformBillingService {
     return created;
   }
 
-  /** Cheapest public plan, so a gym always lands somewhere sensible. */
+  /** First self-serve public plan (Starter) — never Custom / contact-sales. */
   private async defaultPlan() {
     const publicPlans = await this.plans.listPublic();
-    if (!publicPlans.length) {
+    const selfServe = publicPlans.filter((p) => !p.isContactSales);
+    const pick = selfServe[0] || publicPlans[0];
+    if (!pick) {
       throw new BadRequestException(
         'No platform plans are configured — add one in the plans table',
       );
     }
-    return this.plans.findByCode(publicPlans[0].code);
+    return this.plans.findByCode(pick.code);
   }
 
   async getSubscription(
@@ -156,6 +189,10 @@ export class PlatformBillingService {
       sub.status === 'TRIALING' && sub.trialEndsAt
         ? Math.max(0, daysBetween(now, sub.trialEndsAt))
         : null;
+    const features = await this.effectiveFeatures(
+      companyId,
+      (plan?.features || []) as PlatformFeature[],
+    );
 
     return {
       status: sub.status,
@@ -173,7 +210,7 @@ export class PlatformBillingService {
         branches,
         interval: sub.interval,
       }),
-      features: (plan?.features || []) as PlatformFeature[],
+      features,
       maxBranches: plan?.maxBranches ?? null,
       maxMembers: plan?.maxMembers ?? null,
       canWrite: canWrite(sub.status),
@@ -191,7 +228,11 @@ export class PlatformBillingService {
   ): Promise<boolean> {
     const sub = await this.getSubscription(companyId);
     const plan = await this.plans.findById(String(sub.planId));
-    return (plan?.features || []).includes(feature);
+    const features = await this.effectiveFeatures(
+      companyId,
+      (plan?.features || []) as PlatformFeature[],
+    );
+    return features.includes(feature);
   }
 
   async charges(companyId: string, limit = 24) {
@@ -233,6 +274,11 @@ export class PlatformBillingService {
   ) {
     const sub = await this.getSubscription(companyId);
     const plan = await this.plans.findByCode(planCode);
+    if ((plan as any).isContactSales === true) {
+      throw new BadRequestException(
+        'Custom plans are sales-led. Submit the Custom inquiry form and we will reach out.',
+      );
+    }
     const branches = await this.countBranches(companyId);
 
     if (plan.maxBranches != null && branches > plan.maxBranches) {

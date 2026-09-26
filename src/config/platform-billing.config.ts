@@ -94,40 +94,37 @@ export const SEED_PLATFORM_PLANS = [
     code: 'STARTER',
     name: 'Starter',
     description:
-      'Everything a single-branch gym needs: members, plans, payments and GST invoices.',
-    pricePerBranch: 999,
+      'Basic CRM for a single-branch gym: members, plans, payments and GST invoices.',
+    pricePerBranch: 1499,
     interval: 'MONTHLY' as BillingInterval,
     trialDays: DEFAULT_TRIAL_DAYS,
-    features: ['EMAIL_TEMPLATES'] as PlatformFeature[],
+    features: [] as PlatformFeature[],
     maxBranches: 1,
     maxMembers: null,
     sortOrder: 1,
+    isContactSales: false,
   },
   {
     code: 'GROWTH',
     name: 'Growth',
     description:
-      'Adds UPI Autopay mandates, WhatsApp auto-send and staff accounts.',
-    pricePerBranch: 1999,
+      'Basic CRM plus custom member email templates — everything most gyms need to start.',
+    pricePerBranch: 2399,
     interval: 'MONTHLY' as BillingInterval,
     trialDays: DEFAULT_TRIAL_DAYS,
-    features: [
-      'AUTOPAY',
-      'WHATSAPP_CLOUD',
-      'EMAIL_TEMPLATES',
-      'STAFF_RBAC',
-    ] as PlatformFeature[],
+    features: ['EMAIL_TEMPLATES'] as PlatformFeature[],
     maxBranches: 3,
     maxMembers: null,
     sortOrder: 2,
     isRecommended: true,
+    isContactSales: false,
   },
   {
-    code: 'CHAIN',
-    name: 'Chain',
+    code: 'CUSTOM',
+    name: 'Custom',
     description:
-      'Unlimited branches with per-branch reporting for multi-location operators.',
-    pricePerBranch: 1699,
+      'Multi-branch, Autopay, WhatsApp and tailored limits. Tell us what you need — we will reach out.',
+    pricePerBranch: 0,
     interval: 'MONTHLY' as BillingInterval,
     trialDays: DEFAULT_TRIAL_DAYS,
     features: [
@@ -140,8 +137,13 @@ export const SEED_PLATFORM_PLANS = [
     maxBranches: null,
     maxMembers: null,
     sortOrder: 3,
+    /** Not self-serve — gym submits an inquiry; platform sales follows up. */
+    isContactSales: true,
   },
 ] as const;
+
+/** Legacy plan code — archived on seed sync, kept for old subscriptions. */
+export const ARCHIVED_PLATFORM_PLAN_CODES = ['CHAIN'] as const;
 
 /** Yearly billing bills 10 months — two free, which is the usual SaaS trade. */
 export const YEARLY_MONTHS_CHARGED = 10;

@@ -72,6 +72,13 @@ export class PlatformPlan {
   /** Marks the plan highlighted in the UI. */
   @Prop({ type: Boolean, default: false })
   isRecommended: boolean;
+
+  /**
+   * Sales-led plan: gym cannot self-subscribe. They submit an inquiry and we
+   * reach out with a tailored quote.
+   */
+  @Prop({ type: Boolean, default: false })
+  isContactSales: boolean;
 }
 
 export const PlatformPlanSchema = SchemaFactory.createForClass(PlatformPlan);

@@ -171,4 +171,21 @@ export class UpdateGymSettingsDto {
   @IsString()
   @IsIn([...COUNTRIES.map((c) => c.code)])
   countryCode?: string;
+
+  /** SUPER_ADMIN only — unlock Autopay module for this gym (Coming soon → usable). */
+  @IsOptional()
+  @IsBoolean()
+  featureAutopayUnlocked?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  featureRazorpayUnlocked?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  featureWhatsappUnlocked?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  featureEmailTemplatesUnlocked?: boolean;
 }

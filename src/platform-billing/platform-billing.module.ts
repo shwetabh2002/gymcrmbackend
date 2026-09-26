@@ -12,6 +12,11 @@ import {
   PlatformCharge,
   PlatformChargeSchema,
 } from './schemas/platform-charge.schema';
+import {
+  PlatformPlanInquiry,
+  PlatformPlanInquirySchema,
+} from './schemas/platform-plan-inquiry.schema';
+import { PlatformPlanInquiryService } from './platform-plan-inquiry.service';
 import { Company, CompanySchema } from '../companies/schemas/company.schema';
 import { Location, LocationSchema } from '../locations/schemas/location.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
@@ -25,6 +30,10 @@ import {
 } from './platform-billing.controller';
 import { PaymentProviderModule } from '../payment-provider/payment-provider.module';
 import { CountersModule } from '../counters/counters.module';
+import {
+  GymSettings,
+  GymSettingsSchema,
+} from '../gym-settings/schemas/gym-settings.schema';
 
 /**
  * Global so the subscription guard and any feature gate can be applied
@@ -37,9 +46,11 @@ import { CountersModule } from '../counters/counters.module';
       { name: PlatformPlan.name, schema: PlatformPlanSchema },
       { name: PlatformSubscription.name, schema: PlatformSubscriptionSchema },
       { name: PlatformCharge.name, schema: PlatformChargeSchema },
+      { name: PlatformPlanInquiry.name, schema: PlatformPlanInquirySchema },
       { name: Company.name, schema: CompanySchema },
       { name: Location.name, schema: LocationSchema },
       { name: User.name, schema: UserSchema },
+      { name: GymSettings.name, schema: GymSettingsSchema },
     ]),
     PaymentProviderModule,
     CountersModule,
@@ -49,6 +60,7 @@ import { CountersModule } from '../counters/counters.module';
     PlatformBillingService,
     PlatformChargingService,
     PlatformBillingWorkerService,
+    PlatformPlanInquiryService,
   ],
   controllers: [PlatformBillingController, PlatformAdminController],
   exports: [
@@ -56,6 +68,7 @@ import { CountersModule } from '../counters/counters.module';
     PlatformBillingService,
     PlatformChargingService,
     PlatformBillingWorkerService,
+    PlatformPlanInquiryService,
   ],
 })
 export class PlatformBillingModule {}

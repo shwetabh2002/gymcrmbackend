@@ -23,6 +23,7 @@ import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { getUploadLimits } from '../config/upload.config';
 import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 @Controller('gym-settings')
 @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
@@ -43,8 +44,12 @@ export class GymSettingsController {
   @Put()
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
-  update(@CompanyId() companyId: string, @Body() dto: UpdateGymSettingsDto) {
-    return this.gymSettingsService.update(companyId, dto);
+  update(
+    @CompanyId() companyId: string,
+    @Body() dto: UpdateGymSettingsDto,
+    @CurrentUser('role') role: string,
+  ) {
+    return this.gymSettingsService.update(companyId, dto, role);
   }
 
   @Post('upload')

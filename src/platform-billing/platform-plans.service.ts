@@ -12,6 +12,7 @@ import {
   PlatformPlanDocument,
 } from './schemas/platform-plan.schema';
 import {
+  ARCHIVED_PLATFORM_PLAN_CODES,
   BillingInterval,
   PlatformFeature,
   SEED_PLATFORM_PLANS,
@@ -35,19 +36,52 @@ export class PlatformPlansService implements OnModuleInit {
     private planModel: Model<PlatformPlanDocument>,
   ) {}
 
-  /** A fresh install has nothing to sell — seed once, never overwrite. */
+  /**
+   * Upsert seed plans by code so price / feature changes land in existing DBs.
+   * Legacy codes (e.g. CHAIN) are archived, never deleted.
+   */
   async onModuleInit() {
-    const existing = await this.planModel.countDocuments().exec();
-    if (existing > 0) return;
+    for (const plan of SEED_PLATFORM_PLANS) {
+      await this.planModel
+        .findOneAndUpdate(
+          { code: plan.code },
+          {
+            $set: {
+              name: plan.name,
+              description: plan.description,
+              pricePerBranch: plan.pricePerBranch,
+              interval: plan.interval,
+              trialDays: plan.trialDays,
+              features: [...plan.features],
+              maxBranches: plan.maxBranches,
+              maxMembers: plan.maxMembers,
+              sortOrder: plan.sortOrder,
+              isRecommended: 'isRecommended' in plan && !!(plan as any).isRecommended,
+              isContactSales: !!(plan as any).isContactSales,
+              isPublic: true,
+              isActive: true,
+            },
+            $setOnInsert: {
+              code: plan.code,
+              currency: 'INR',
+            },
+          },
+          { upsert: true },
+        )
+        .exec();
+    }
 
-    await this.planModel.insertMany(
-      SEED_PLATFORM_PLANS.map((plan) => ({
-        ...plan,
-        features: [...plan.features],
-      })),
-    );
+    if (ARCHIVED_PLATFORM_PLAN_CODES.length) {
+      await this.planModel
+        .updateMany(
+          { code: { $in: [...ARCHIVED_PLATFORM_PLAN_CODES] } },
+          { $set: { isActive: false, isPublic: false } },
+        )
+        .exec();
+    }
+
     this.logger.log(
-      `Seeded ${SEED_PLATFORM_PLANS.length} platform plans (edit them in the plans table, not in code)`,
+      `Synced ${SEED_PLATFORM_PLANS.length} platform plans (Starter/Growth/Custom)`,
     );
   }
 
@@ -136,6 +170,7 @@ export class PlatformPlansService implements OnModuleInit {
       isPublic: plan.isPublic !== false,
       isActive: plan.isActive !== false,
       isRecommended: plan.isRecommended === true,
+      isContactSales: plan.isContactSales === true,
       sortOrder: plan.sortOrder ?? 0,
       /** What one branch costs on each cycle — shown on the pricing table. */
       pricing: {

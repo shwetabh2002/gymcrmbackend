@@ -4,20 +4,33 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
+import { Type } from 'class-transformer';
 import { PlatformBillingService } from './platform-billing.service';
 import { PlatformChargingService } from './platform-charging.service';
 import { PlatformPlansService } from './platform-plans.service';
 import { PlatformBillingWorkerService } from './platform-billing-worker.service';
+import { PlatformPlanInquiryService } from './platform-plan-inquiry.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { BillingExempt } from './decorators/billing.decorators';
 import { BILLING_INTERVALS } from '../config/platform-billing.config';
 
@@ -37,6 +50,57 @@ class CancelDto {
   reason?: string;
 }
 
+class CustomInquiryDto {
+  @IsString()
+  @MaxLength(120)
+  contactName: string;
+
+  @IsString()
+  @MaxLength(40)
+  contactPhone: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(160)
+  contactEmail?: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  branchCount: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  approxMembers?: number;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  needs?: string[];
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  currentSoftware?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  message?: string;
+}
+
+class InquiryStatusDto {
+  @IsIn(['NEW', 'CONTACTED', 'CLOSED'])
+  status: 'NEW' | 'CONTACTED' | 'CLOSED';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  adminNotes?: string;
+}
+
 /**
  * A gym's own subscription screen.
  *
@@ -52,6 +116,7 @@ export class PlatformBillingController {
     private readonly billing: PlatformBillingService,
     private readonly charging: PlatformChargingService,
     private readonly plans: PlatformPlansService,
+    private readonly inquiries: PlatformPlanInquiryService,
   ) {}
 
   /** Where this gym stands: plan, status, days left, what renewal will cost. */
@@ -90,6 +155,20 @@ export class PlatformBillingController {
   }
 
   /**
+   * Custom / sales-led plan: gym answers a few questions; SUPER_ADMIN sees the
+   * lead and reaches out.
+   */
+  @Post('custom-inquiry')
+  @HttpCode(HttpStatus.CREATED)
+  submitCustomInquiry(
+    @CompanyId() companyId: string,
+    @CurrentUser('userId') userId: string,
+    @Body() body: CustomInquiryDto,
+  ) {
+    return this.inquiries.submit(companyId, userId, body);
+  }
+
+  /**
    * Starts the UPI Autopay mandate for our fees. The returned link is what the
    * gym owner approves; the first period is charged in the same step.
    */
@@ -122,6 +201,7 @@ export class PlatformAdminController {
     private readonly billing: PlatformBillingService,
     private readonly plans: PlatformPlansService,
     private readonly worker: PlatformBillingWorkerService,
+    private readonly inquiries: PlatformPlanInquiryService,
   ) {}
 
   /** Counts by status, MRR, lifetime revenue, trials ending soon. */
@@ -153,6 +233,19 @@ export class PlatformAdminController {
   @HttpCode(HttpStatus.OK)
   archivePlan(@Query('id') id: string) {
     return this.plans.archive(id);
+  }
+
+  /** Custom plan leads from gyms. */
+  @Get('inquiries')
+  @HttpCode(HttpStatus.OK)
+  listInquiries(@Query('status') status?: string) {
+    return this.inquiries.listForAdmin(status);
+  }
+
+  @Patch('inquiries/:id')
+  @HttpCode(HttpStatus.OK)
+  updateInquiry(@Param('id') id: string, @Body() body: InquiryStatusDto) {
+    return this.inquiries.updateStatus(id, body.status, body.adminNotes);
   }
 
   /** Run the billing sweep now instead of waiting for the timer. */

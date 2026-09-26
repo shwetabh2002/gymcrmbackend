@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import {
@@ -21,6 +21,7 @@ import {
   DEFAULT_INVOICE_TAX_PERCENTAGE,
   isInvoiceTaxMode,
 } from '../invoices/tax.util';
+import { Role } from '../common/enums/role.enum';
 
 type BrandAssetKind = 'logo' | 'favicon' | 'stamp';
 
@@ -97,6 +98,10 @@ export class GymSettingsService {
         typeof doc.autopayMandateValidityMonths === 'number'
           ? doc.autopayMandateValidityMonths
           : 60,
+      featureAutopayUnlocked: doc.featureAutopayUnlocked === true,
+      featureRazorpayUnlocked: doc.featureRazorpayUnlocked === true,
+      featureWhatsappUnlocked: doc.featureWhatsappUnlocked === true,
+      featureEmailTemplatesUnlocked: doc.featureEmailTemplatesUnlocked === true,
       countryCode: country.code,
       countryName: country.name,
       currency: country.currency,
@@ -129,13 +134,49 @@ export class GymSettingsService {
     const cid = new Types.ObjectId(companyId);
     const doc = await this.settingsModel
       .findOne({ companyId: cid })
-      .select('autopayEnabled')
+      .select('autopayEnabled featureAutopayUnlocked')
       .lean()
       .exec();
-    return doc?.autopayEnabled === true;
+    return (
+      doc?.featureAutopayUnlocked === true && doc?.autopayEnabled === true
+    );
   }
 
-  async update(companyId: string, dto: UpdateGymSettingsDto) {
+  /** Platform feature lock — unlocked per gym by SUPER_ADMIN. */
+  async assertFeatureUnlocked(
+    companyId: string,
+    feature:
+      | 'autopay'
+      | 'razorpay'
+      | 'whatsapp'
+      | 'emailTemplates',
+  ): Promise<void> {
+    const cid = new Types.ObjectId(companyId);
+    const field =
+      feature === 'autopay'
+        ? 'featureAutopayUnlocked'
+        : feature === 'razorpay'
+          ? 'featureRazorpayUnlocked'
+          : feature === 'whatsapp'
+            ? 'featureWhatsappUnlocked'
+            : 'featureEmailTemplatesUnlocked';
+    const doc = await this.settingsModel
+      .findOne({ companyId: cid })
+      .select(field)
+      .lean()
+      .exec();
+    if ((doc as any)?.[field] !== true) {
+      throw new ForbiddenException(
+        `${feature} is locked for this gym — ask platform admin to unlock it`,
+      );
+    }
+  }
+
+  async update(
+    companyId: string,
+    dto: UpdateGymSettingsDto,
+    actorRole?: string,
+  ) {
     const cid = new Types.ObjectId(companyId);
     const update: Record<string, unknown> = { companyId: cid };
 
@@ -223,8 +264,50 @@ export class GymSettingsService {
     if (dto.invoiceTerms !== undefined) {
       update.invoiceTerms = dto.invoiceTerms?.trim() || null;
     }
+    const unlockKeys = [
+      'featureAutopayUnlocked',
+      'featureRazorpayUnlocked',
+      'featureWhatsappUnlocked',
+      'featureEmailTemplatesUnlocked',
+    ] as const;
+    const wantsUnlockChange = unlockKeys.some((k) => dto[k] !== undefined);
+    if (wantsUnlockChange && actorRole !== Role.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        'Only SUPER_ADMIN can unlock payment features for a gym',
+      );
+    }
+    for (const k of unlockKeys) {
+      if (dto[k] !== undefined) update[k] = dto[k];
+    }
+    // Autopay needs Razorpay — unlocking Autopay unlocks Razorpay too
+    if (dto.featureAutopayUnlocked === true) {
+      update.featureRazorpayUnlocked = true;
+    }
+
+    // Resolve whether Autopay module will be unlocked after this write
+    const existing = await this.settingsModel
+      .findOne({ companyId: cid })
+      .select(
+        'featureAutopayUnlocked autopayEnabled',
+      )
+      .lean()
+      .exec();
+    const autopayUnlockedAfter =
+      dto.featureAutopayUnlocked !== undefined
+        ? dto.featureAutopayUnlocked === true
+        : existing?.featureAutopayUnlocked === true;
+
     if (dto.autopayEnabled !== undefined) {
+      if (dto.autopayEnabled === true && !autopayUnlockedAfter) {
+        throw new ForbiddenException(
+          'Autopay is locked for this gym — ask platform admin to unlock it',
+        );
+      }
       update.autopayEnabled = dto.autopayEnabled;
+    }
+    // Locking Autopay also turns the gym toggle OFF
+    if (dto.featureAutopayUnlocked === false) {
+      update.autopayEnabled = false;
     }
     if (dto.autopayMethod !== undefined) {
       update.autopayMethod = dto.autopayMethod;

@@ -133,6 +133,22 @@ export class GymSettings {
   /** How long the mandate itself stays valid. */
   @Prop({ type: Number, default: 60 })
   autopayMandateValidityMonths: number;
+
+  /**
+   * Platform unlocks (SUPER_ADMIN). Default locked = Coming soon for the gym.
+   * Unlocking does not turn the feature ON — gym still configures / toggles separately.
+   */
+  @Prop({ type: Boolean, default: false })
+  featureAutopayUnlocked: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  featureRazorpayUnlocked: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  featureWhatsappUnlocked: boolean;
+
+  @Prop({ type: Boolean, default: false })
+  featureEmailTemplatesUnlocked: boolean;
 }
 
 export const GymSettingsSchema = SchemaFactory.createForClass(GymSettings);
