@@ -535,7 +535,7 @@ export class MemberSubscriptionsService {
     subscriptionId: string,
     paymentAmount: number,
   ): Promise<MemberSubscriptionDocument> {
-    if (paymentAmount <= 0) {
+    if (!(paymentAmount > 0)) {
       throw new BadRequestException('Payment amount must be greater than 0');
     }
 
@@ -546,6 +546,15 @@ export class MemberSubscriptionsService {
     if (!subscription) {
       throw new NotFoundException(
         `Member subscription with ID ${subscriptionId} not found`,
+      );
+    }
+
+    const owed = Number(subscription.pendingAmount) || 0;
+    if (paymentAmount > owed + 0.01) {
+      throw new BadRequestException(
+        owed <= 0
+          ? 'This subscription is fully paid — nothing is pending'
+          : `Amount cannot exceed the pending balance (${owed})`,
       );
     }
 

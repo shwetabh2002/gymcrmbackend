@@ -18,6 +18,7 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
+import { RequiresFeature } from '../platform-billing/decorators/billing.decorators';
 
 class UpdateEmailTemplateDto {
   /** Empty string restores the platform default. */
@@ -59,6 +60,7 @@ export class EmailTemplatesController {
   }
 
   @Put(':type')
+  @RequiresFeature('EMAIL_TEMPLATES')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   update(
@@ -71,6 +73,7 @@ export class EmailTemplatesController {
   }
 
   @Post(':type/reset')
+  @RequiresFeature('EMAIL_TEMPLATES')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   reset(@CompanyId() companyId: string, @Param('type') type: string) {

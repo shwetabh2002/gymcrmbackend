@@ -2,7 +2,7 @@ import { Module, Logger } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -18,6 +18,7 @@ import { DuesModule } from './dues/dues.module';
 import { EmployeesModule } from './employees/employees.module';
 import { GymSettingsModule } from './gym-settings/gym-settings.module';
 import { ActivityLogsModule } from './activity-logs/activity-logs.module';
+import { ActivityLogInterceptor } from './activity-logs/activity-log.interceptor';
 import { CompaniesModule } from './companies/companies.module';
 import { LocationsModule } from './locations/locations.module';
 import { EmailModule } from './email/email.module';
@@ -63,6 +64,8 @@ import { GLOBAL_THROTTLE } from './config/throttle.config';
 
         return {
           uri: mongoUri,
+          maxPoolSize: Number(configService.get('MONGO_MAX_POOL_SIZE')) || 20,
+          serverSelectionTimeoutMS: 10_000,
           connectionFactory: (connection) => {
             let loggedOnce = false;
             const logConnected = (reason: string) => {
@@ -135,6 +138,11 @@ import { GLOBAL_THROTTLE } from './config/throttle.config';
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
+    },
+    // When ACTIVITY_LOGS_ENABLED=true, every mutating request is audited.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: ActivityLogInterceptor,
     },
   ],
 })

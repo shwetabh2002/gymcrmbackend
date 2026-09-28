@@ -41,6 +41,13 @@ export class CompanyContextService {
       return cached.country;
     }
 
+    if (this.cache.size > 500) {
+      const now = Date.now();
+      for (const [k, v] of this.cache) {
+        if (now - v.at >= CACHE_TTL_MS) this.cache.delete(k);
+      }
+    }
+
     const company = await this.companyModel
       .findById(key)
       .select('countryCode')

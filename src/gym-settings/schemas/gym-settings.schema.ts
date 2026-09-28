@@ -149,6 +149,24 @@ export class GymSettings {
 
   @Prop({ type: Boolean, default: false })
   featureEmailTemplatesUnlocked: boolean;
+
+  /**
+   * Entitlement: SUPER_ADMIN unlock for this gym (or plan includes ACTIVITY_LOGS).
+   * Does not by itself write logs — see activityLogsEnabled.
+   */
+  @Prop({ type: Boolean, default: false })
+  featureActivityLogsUnlocked: boolean;
+
+  /**
+   * Gym-level dynamic switch. Only effective when backend ACTIVITY_LOGS_ENABLED
+   * is on AND this gym is entitled (unlock or plan).
+   */
+  @Prop({ type: Boolean, default: false })
+  activityLogsEnabled: boolean;
+
+  /** How long activity rows are kept for this gym (days). */
+  @Prop({ type: Number, default: 30, min: 7, max: 365 })
+  activityLogRetentionDays: number;
 }
 
 export const GymSettingsSchema = SchemaFactory.createForClass(GymSettings);

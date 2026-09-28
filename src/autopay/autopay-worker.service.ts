@@ -55,6 +55,8 @@ export type AutopayRunSummary = {
 export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AutopayWorkerService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** In-process guard — Mongo lease covers multi-instance; this covers TTL edge cases. */
+  private running = false;
 
   constructor(
     @InjectModel(MemberSubscription.name)
@@ -82,11 +84,15 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
     this.timer = setInterval(() => {
       void this.processDueCharges();
     }, ms);
+    if (typeof (this.timer as any).unref === 'function') {
+      (this.timer as any).unref();
+    }
     this.logger.log(`Autopay worker interval ${ms}ms`);
   }
 
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
 
   /**
@@ -126,20 +132,7 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
   async processDueCharges(
     companyScope?: string,
   ): Promise<AutopayRunSummary & { alreadyRunning?: boolean }> {
-    /**
-     * One sweep at a time across the whole deployment, not just this process.
-     * A manual run for a single gym is scoped to its own key so it is not
-     * blocked by the platform-wide sweep, and vice versa.
-     */
-    const lockKey = companyScope
-      ? `${AUTOPAY_LOCK_KEY}:${companyScope}`
-      : AUTOPAY_LOCK_KEY;
-
-    const result = await this.jobLock.runExclusively(lockKey, () =>
-      this.sweep(companyScope),
-    );
-
-    if (result === null) {
+    if (this.running) {
       return {
         charged: 0,
         pending: 0,
@@ -149,7 +142,35 @@ export class AutopayWorkerService implements OnModuleInit, OnModuleDestroy {
         alreadyRunning: true,
       };
     }
-    return result;
+    /**
+     * One sweep at a time across the whole deployment, not just this process.
+     * A manual run for a single gym is scoped to its own key so it is not
+     * blocked by the platform-wide sweep, and vice versa.
+     */
+    const lockKey = companyScope
+      ? `${AUTOPAY_LOCK_KEY}:${companyScope}`
+      : AUTOPAY_LOCK_KEY;
+
+    this.running = true;
+    try {
+      const result = await this.jobLock.runExclusively(lockKey, () =>
+        this.sweep(companyScope),
+      );
+
+      if (result === null) {
+        return {
+          charged: 0,
+          pending: 0,
+          failed: 0,
+          skipped: 0,
+          examined: 0,
+          alreadyRunning: true,
+        };
+      }
+      return result;
+    } finally {
+      this.running = false;
+    }
   }
 
   private async sweep(companyScope?: string): Promise<AutopayRunSummary> {

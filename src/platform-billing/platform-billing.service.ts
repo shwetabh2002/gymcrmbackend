@@ -36,6 +36,12 @@ import {
   GymSettings,
   GymSettingsDocument,
 } from '../gym-settings/schemas/gym-settings.schema';
+import { User, UserDocument } from '../users/schemas/user.schema';
+import {
+  ActivityLogsService,
+  ActivityActor,
+} from '../activity-logs/activity-logs.service';
+import { Role } from '../common/enums/role.enum';
 
 /** What every caller needs to know about a gym's standing, in one shape. */
 export type BillingSnapshot = {
@@ -78,9 +84,12 @@ export class PlatformBillingService {
     private companyModel: Model<CompanyDocument>,
     @InjectModel(GymSettings.name)
     private gymSettingsModel: Model<GymSettingsDocument>,
+    @InjectModel(User.name)
+    private userModel: Model<UserDocument>,
     private plans: PlatformPlansService,
     private counters: CountersService,
     private runtime: RuntimeService,
+    private activityLogs: ActivityLogsService,
   ) {}
 
 
@@ -93,13 +102,14 @@ export class PlatformBillingService {
     const settings = await this.gymSettingsModel
       .findOne({ companyId: new Types.ObjectId(companyId) })
       .select(
-        'featureAutopayUnlocked featureWhatsappUnlocked featureEmailTemplatesUnlocked',
+        'featureAutopayUnlocked featureWhatsappUnlocked featureEmailTemplatesUnlocked featureActivityLogsUnlocked',
       )
       .lean()
       .exec();
     if (settings?.featureAutopayUnlocked) features.add('AUTOPAY');
     if (settings?.featureWhatsappUnlocked) features.add('WHATSAPP_CLOUD');
     if (settings?.featureEmailTemplatesUnlocked) features.add('EMAIL_TEMPLATES');
+    if (settings?.featureActivityLogsUnlocked) features.add('ACTIVITY_LOGS');
     return [...features];
   }
 
@@ -213,7 +223,7 @@ export class PlatformBillingService {
       features,
       maxBranches: plan?.maxBranches ?? null,
       maxMembers: plan?.maxMembers ?? null,
-      canWrite: canWrite(sub.status),
+      canWrite: canWrite(sub.status, sub.trialEndsAt),
       mandateApproved: !!sub.mandateTokenId,
       mandateShareUrl: sub.mandateShareUrl,
       lastFailureReason: sub.lastFailureReason,
@@ -293,16 +303,16 @@ export class PlatformBillingService {
     sub.pricePerBranch = plan.pricePerBranch;
     sub.interval = interval;
     sub.currency = plan.currency;
-    // A plan change never revives a cancelled account on its own; the caller
-    // resubscribes explicitly.
+    // Never revive READ_ONLY / CANCELLED via plan change alone — that would let
+    // any gym staff restore write access + new features without paying.
+    // Use resume (mandate) or SUPER_ADMIN extend-trial for recovery.
     if (sub.status === 'READ_ONLY' || sub.status === 'CANCELLED') {
-      sub.status = sub.mandateTokenId ? 'ACTIVE' : 'TRIALING';
-      if (sub.status === 'TRIALING' && !sub.trialEndsAt) {
-        sub.trialEndsAt = addDays(new Date(), plan.trialDays);
-      }
-      sub.cancelledAt = null;
+      throw new BadRequestException(
+        'This subscription is not active. Complete payment / mandate to resume, or ask platform support to extend the trial.',
+      );
     }
     await sub.save();
+    this.activityLogs.invalidateAccessCache(companyId);
 
     this.logger.log(`Company ${companyId} moved to ${plan.code} (${interval})`);
     return this.snapshot(companyId);
@@ -565,9 +575,50 @@ export class PlatformBillingService {
     };
   }
 
-  /** Every gym with its billing standing — the SUPER_ADMIN companies table. */
-  async listCompanies(status?: string) {
-    const filter = status && status !== 'ALL' ? { status } : {};
+  /**
+   * Every gym with billing standing — SUPER_ADMIN table.
+   * Optional `q` matches gym name, phone, city, slug, or admin email.
+   */
+  async listCompanies(status?: string, q?: string) {
+    const filter: Record<string, unknown> =
+      status && status !== 'ALL' ? { status } : {};
+
+    const term = (q || '').trim();
+    if (term) {
+      const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const rx = new RegExp(escaped, 'i');
+      const [byCompany, byEmail] = await Promise.all([
+        this.companyModel
+          .find({
+            $or: [
+              { name: rx },
+              { phone: rx },
+              { city: rx },
+              { slug: rx },
+            ],
+          })
+          .select('_id')
+          .lean()
+          .exec(),
+        this.userModel
+          .find({
+            email: rx,
+            companyId: { $ne: null },
+          })
+          .select('companyId')
+          .lean()
+          .exec(),
+      ]);
+      const ids = [
+        ...new Set([
+          ...byCompany.map((c: any) => String(c._id)),
+          ...byEmail.map((u: any) => String(u.companyId)),
+        ]),
+      ].map((id) => new Types.ObjectId(id));
+      if (!ids.length) return [];
+      filter.companyId = { $in: ids };
+    }
+
     const subs = await this.subModel
       .find(filter)
       .populate('companyId', 'name slug city phone createdAt')
@@ -576,26 +627,119 @@ export class PlatformBillingService {
       .lean()
       .exec();
 
-    return subs.map((s: any) => ({
-      companyId: String(s.companyId?._id ?? s.companyId),
-      companyName: s.companyId?.name ?? 'Unknown',
-      city: s.companyId?.city ?? null,
-      phone: s.companyId?.phone ?? null,
-      signedUpAt: s.companyId?.createdAt ?? null,
-      status: s.status,
-      planCode: s.planCode,
-      interval: s.interval,
-      pricePerBranch: s.pricePerBranch,
-      branches: s.billedBranches,
-      trialEndsAt: s.trialEndsAt,
-      currentPeriodEnd: s.currentPeriodEnd,
-      lastChargeAt: s.lastChargeAt,
-      lastAmount: s.lastAmount,
-      mandateApproved: !!s.mandateTokenId,
-      dunningAttempts: s.dunningAttempts || 0,
-      lastFailureReason: s.lastFailureReason,
-      cancelledAt: s.cancelledAt,
-    }));
+    const companyIds = subs
+      .map((s: any) => s.companyId?._id ?? s.companyId)
+      .filter(Boolean);
+    const admins = companyIds.length
+      ? await this.userModel
+          .find({
+            companyId: { $in: companyIds },
+            role: Role.ADMIN,
+          })
+          .select('companyId email name')
+          .lean()
+          .exec()
+      : [];
+    const adminByCompany = new Map<string, { email: string; name: string }>();
+    for (const a of admins as any[]) {
+      const cid = String(a.companyId);
+      if (!adminByCompany.has(cid)) {
+        adminByCompany.set(cid, { email: a.email, name: a.name });
+      }
+    }
+
+    return subs.map((s: any) => {
+      const companyId = String(s.companyId?._id ?? s.companyId);
+      const admin = adminByCompany.get(companyId);
+      return {
+        companyId,
+        companyName: s.companyId?.name ?? 'Unknown',
+        city: s.companyId?.city ?? null,
+        phone: s.companyId?.phone ?? null,
+        adminEmail: admin?.email ?? null,
+        adminName: admin?.name ?? null,
+        signedUpAt: s.companyId?.createdAt ?? null,
+        status: s.status,
+        planCode: s.planCode,
+        interval: s.interval,
+        pricePerBranch: s.pricePerBranch,
+        branches: s.billedBranches,
+        trialEndsAt: s.trialEndsAt,
+        currentPeriodEnd: s.currentPeriodEnd,
+        lastChargeAt: s.lastChargeAt,
+        lastAmount: s.lastAmount,
+        mandateApproved: !!s.mandateTokenId,
+        dunningAttempts: s.dunningAttempts || 0,
+        lastFailureReason: s.lastFailureReason,
+        cancelledAt: s.cancelledAt,
+      };
+    });
+  }
+
+  /**
+   * SUPER_ADMIN: bump or set trial end. Revives READ_ONLY / CANCELLED into TRIALING.
+   */
+  async extendTrial(
+    companyId: string,
+    opts: { days?: number; until?: string },
+    actor?: ActivityActor,
+  ) {
+    const sub = await this.getSubscription(companyId);
+    const prevEnds = sub.trialEndsAt;
+    const prevStatus = sub.status;
+
+    let newEnd: Date;
+    if (opts.until) {
+      newEnd = new Date(opts.until);
+      if (Number.isNaN(newEnd.getTime())) {
+        throw new BadRequestException('until must be a valid date');
+      }
+    } else {
+      const days = opts.days != null ? Number(opts.days) : 7;
+      if (!Number.isFinite(days) || days < 1 || days > 365) {
+        throw new BadRequestException('days must be between 1 and 365');
+      }
+      const base =
+        sub.trialEndsAt && new Date(sub.trialEndsAt).getTime() > Date.now()
+          ? new Date(sub.trialEndsAt)
+          : new Date();
+      newEnd = addDays(base, Math.round(days));
+    }
+
+    if (newEnd.getTime() <= Date.now()) {
+      throw new BadRequestException('New trial end must be in the future');
+    }
+
+    sub.trialEndsAt = newEnd;
+    sub.status = 'TRIALING';
+    sub.cancelledAt = null;
+    sub.cancellationReason = null;
+    sub.trialRemindersSent = [];
+    await sub.save();
+    await this.syncCompanyStatus(companyId, 'TRIALING');
+
+    if (actor) {
+      await this.activityLogs.log({
+        companyId,
+        actor,
+        action: 'TRIAL_EXTENDED',
+        entityType: 'platform_subscription',
+        entityId: String(sub._id),
+        summary: `Trial extended to ${newEnd.toISOString().slice(0, 10)} (was ${prevStatus})`,
+        metadata: {
+          previousStatus: prevStatus,
+          previousTrialEndsAt: prevEnds,
+          newTrialEndsAt: newEnd,
+          days: opts.days ?? null,
+          until: opts.until ?? null,
+        },
+      });
+    }
+
+    this.logger.log(
+      `Company ${companyId} trial extended to ${newEnd.toISOString()} by ${actor?.userId || 'system'}`,
+    );
+    return this.snapshot(companyId);
   }
 
   /** Rows the sweep needs to act on. */

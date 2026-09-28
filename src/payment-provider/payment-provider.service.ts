@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -30,6 +31,11 @@ import {
   RAZORPAY_TOKEN_REFRESH_LEEWAY_MS,
   RAZORPAY_WEBHOOK_EVENTS,
 } from '../config/razorpay.config';
+import { PlatformBillingService } from '../platform-billing/platform-billing.service';
+import {
+  GymSettings,
+  GymSettingsDocument,
+} from '../gym-settings/schemas/gym-settings.schema';
 
 @Injectable()
 export class PaymentProviderService {
@@ -40,11 +46,32 @@ export class PaymentProviderService {
     private accountModel: Model<PaymentProviderAccountDocument>,
     @InjectModel(OAuthState.name)
     private oauthStateModel: Model<OAuthStateDocument>,
+    @InjectModel(GymSettings.name)
+    private gymSettingsModel: Model<GymSettingsDocument>,
     private encryption: TokenEncryptionService,
     private razorpay: RazorpayApiService,
     private config: ConfigService,
     private runtime: RuntimeService,
+    private billing: PlatformBillingService,
   ) {}
+
+  private async assertRazorpayUnlocked(companyId: string) {
+    const doc = await this.gymSettingsModel
+      .findOne({ companyId: new Types.ObjectId(companyId) })
+      .select('featureRazorpayUnlocked featureAutopayUnlocked')
+      .lean()
+      .exec();
+    if (
+      doc?.featureRazorpayUnlocked === true ||
+      doc?.featureAutopayUnlocked === true
+    ) {
+      return;
+    }
+    if (await this.billing.hasFeature(companyId, 'AUTOPAY')) return;
+    throw new ForbiddenException(
+      'Razorpay is locked for this gym — ask platform admin to unlock it',
+    );
+  }
 
   async getStatus(companyId: string) {
     const acc = await this.accountModel.findOne({ companyId }).exec();
@@ -52,7 +79,7 @@ export class PaymentProviderService {
     /** Same for every gym — what they paste into the Razorpay dashboard. */
     const shared = {
       partnerOAuthAvailable: partnerConfigured,
-      mockAvailable: this.isMockAllowed(),
+      mockAvailable: false,
       environment: this.runtime.nodeEnv,
       webhookUrl: this.runtime.razorpayWebhookUrl(),
       webhookEvents: RAZORPAY_WEBHOOK_EVENTS,
@@ -86,7 +113,7 @@ export class PaymentProviderService {
        * to touch their own dashboard. API-key gyms must register one themselves.
        */
       webhookOwnedByPlatform: acc.authMode === PaymentProviderAuthMode.OAUTH,
-      /** Real UPI Autopay mandates need live credentials, not the mock. */
+      /** Real UPI Autopay mandates need live OAuth or API-key credentials. */
       mandateCapable:
         connected && acc.authMode !== PaymentProviderAuthMode.MOCK,
       ...shared,
@@ -98,6 +125,7 @@ export class PaymentProviderService {
    * dashboard, so each one gets its own signing secret.
    */
   async setWebhookSecret(companyId: string, secret: string) {
+    await this.assertRazorpayUnlocked(companyId);
     const trimmed = (secret || '').trim();
     const acc = await this.accountModel.findOne({ companyId }).exec();
     if (!acc) {
@@ -108,11 +136,8 @@ export class PaymentProviderService {
     return this.getStatus(companyId);
   }
 
-  private isMockAllowed() {
-    return this.runtime.mockAllowed();
-  }
-
   async startOAuth(companyId: string, userId: string) {
+    await this.assertRazorpayUnlocked(companyId);
     if (!this.razorpay.isPartnerConfigured()) {
       throw new BadRequestException(
         'Razorpay Partner OAuth is not configured. Set RAZORPAY_PARTNER_CLIENT_ID/SECRET or connect via API keys.',
@@ -181,6 +206,7 @@ export class PaymentProviderService {
     keySecret: string,
     accountName?: string,
   ) {
+    await this.assertRazorpayUnlocked(companyId);
     if (!keyId?.trim() || !keySecret?.trim()) {
       throw new BadRequestException('keyId and keySecret are required');
     }
@@ -206,28 +232,9 @@ export class PaymentProviderService {
   }
 
   async connectMock(companyId: string, userId: string) {
-    if (!this.isMockAllowed()) {
-      throw new BadRequestException('Mock Razorpay is disabled in production');
-    }
-    await this.accountModel.findOneAndUpdate(
-      { companyId },
-      {
-        companyId: new Types.ObjectId(companyId),
-        provider: PaymentProvider.RAZORPAY,
-        status: PaymentProviderAccountStatus.CONNECTED,
-        authMode: PaymentProviderAuthMode.MOCK,
-        razorpayAccountId: `mock_${companyId.slice(-6)}`,
-        accountName: 'Mock Razorpay (dev)',
-        accessTokenEnc: this.encryption.encrypt('mock'),
-        keyIdEnc: null,
-        refreshTokenEnc: null,
-        expiresAt: null,
-        connectedAt: new Date(),
-        connectedByUserId: new Types.ObjectId(userId),
-      },
-      { upsert: true, returnDocument: 'after' },
+    throw new BadRequestException(
+      'Mock Razorpay is disabled — connect OAuth or API keys for live payments',
     );
-    return this.getStatus(companyId);
   }
 
   async disconnect(companyId: string) {
@@ -271,7 +278,9 @@ export class PaymentProviderService {
   async getCredentials(companyId: string): Promise<RazorpayCredentials> {
     const acc = await this.requireConnected(companyId);
     if (acc.authMode === PaymentProviderAuthMode.MOCK) {
-      return { mode: 'mock' };
+      throw new BadRequestException(
+        'This gym still has a Mock Razorpay connection — disconnect and connect live OAuth or API keys',
+      );
     }
     if (acc.authMode === PaymentProviderAuthMode.API_KEYS) {
       if (!acc.keyIdEnc || !acc.accessTokenEnc) {
@@ -368,11 +377,12 @@ export class PaymentProviderService {
     if (envSecret) secrets.push(envSecret);
 
     if (!secrets.length && !this.runtime.isProduction()) {
-      // Local convenience only; production has no implicit secret.
+      // Dev-only: never fall back to JWT secret (that would couple auth to
+      // payment webhooks). Prefer an explicit RAZORPAY_WEBHOOK_SECRET.
       const fallback = (
-        this.config.get<string>('JWT_ACCESS_SECRET') || 'dev-webhook-secret'
+        this.config.get<string>('RAZORPAY_WEBHOOK_SECRET') || ''
       ).trim();
-      secrets.push(fallback);
+      if (fallback) secrets.push(fallback);
     }
 
     return secrets;

@@ -25,6 +25,7 @@ import {
   ActivityActor,
 } from '../activity-logs/activity-logs.service';
 import { StorageService } from '../storage/storage.service';
+import { LocationsService } from '../locations/locations.service';
 
 type LocScope = { locationId?: string };
 
@@ -37,6 +38,7 @@ export class EmployeesService {
     private userModel: Model<UserDocument>,
     private activityLogsService: ActivityLogsService,
     private storageService: StorageService,
+    private locationsService: LocationsService,
   ) {}
 
   private typeToRole(type: EmployeeType): Role {
@@ -99,6 +101,11 @@ export class EmployeesService {
       dto.customPermissions ?? [Permission.DASHBOARD],
     );
 
+    const locationId = dto.locationId?.trim() || null;
+    if (locationId) {
+      await this.locationsService.assertBelongsToCompany(companyId, locationId);
+    }
+
     const user = new this.userModel({
       name: dto.name.trim(),
       email,
@@ -109,7 +116,7 @@ export class EmployeesService {
       userType: UserType.EMPLOYEE,
       accountStatus: dto.status || AccountStatus.ACTIVE,
       companyId,
-      locationId: dto.locationId?.trim() || null,
+      locationId,
       customPermissions: perms,
     });
 
@@ -207,7 +214,11 @@ export class EmployeesService {
     if (dto.notes !== undefined) user.notes = dto.notes?.trim() || null;
     if (dto.status !== undefined) user.accountStatus = dto.status;
     if (dto.locationId !== undefined) {
-      user.locationId = (dto.locationId?.trim() || null) as any;
+      const nextLoc = dto.locationId?.trim() || null;
+      if (nextLoc) {
+        await this.locationsService.assertBelongsToCompany(companyId, nextLoc);
+      }
+      user.locationId = nextLoc as any;
     }
     // Role is a label only — do not wipe permissions when type changes
     if (dto.type !== undefined) {

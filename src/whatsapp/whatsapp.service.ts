@@ -19,7 +19,6 @@ import {
   WhatsAppMessageStatus,
 } from './schemas/whatsapp-message.schema';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
-import { RuntimeService } from '../common/runtime/runtime.service';
 import { CompanyContextService } from '../common/company-context/company-context.service';
 import {
   FALLBACK_GYM_NAME,
@@ -33,7 +32,7 @@ import {
 export type WhatsAppSendResult = {
   sent: boolean;
   shareUrl: string;
-  mode: 'cloud_api' | 'mock' | 'wa_me';
+  mode: 'cloud_api' | 'wa_me';
   toPhone: string;
   messageId?: string | null;
   error?: string | null;
@@ -50,15 +49,12 @@ export class WhatsAppService implements OnModuleInit {
     private messageModel: Model<WhatsAppMessageDocument>,
     private config: ConfigService,
     private crypto: TokenEncryptionService,
-    private runtime: RuntimeService,
     private companyContext: CompanyContextService,
   ) {}
 
   onModuleInit() {
     this.logger.log(
-      this.mockAllowed()
-        ? 'WhatsApp auto-send: MOCK enabled (messages recorded as sent to member phone)'
-        : 'WhatsApp auto-send: Cloud API only (configure per gym or env)',
+      'WhatsApp auto-send: Cloud API only (configure per gym or env); otherwise wa.me share link',
     );
   }
 
@@ -104,7 +100,6 @@ export class WhatsAppService implements OnModuleInit {
   async getStatus(companyId: string) {
     const acc = await this.accountModel.findOne({ companyId }).exec();
     const envCloud = this.hasEnvCloud();
-    const mockAvailable = this.mockAllowed();
     return {
       connected: acc?.status === WhatsAppAccountStatus.CONNECTED || envCloud,
       status:
@@ -125,16 +120,13 @@ export class WhatsAppService implements OnModuleInit {
       connectedAt: acc?.connectedAt || null,
       /** The gym's own number, as shown to members. */
       senderNumber: acc?.senderNumber || null,
-      mockAvailable,
+      mockAvailable: false,
       /**
        * True only when a message actually leaves on its own. Click-to-chat is a
        * connected state but still needs a human to press Send.
        */
       autoSendReady:
-        acc?.authMode === WhatsAppAuthMode.CLOUD_API ||
-        acc?.authMode === WhatsAppAuthMode.MOCK ||
-        envCloud ||
-        (mockAvailable && !acc),
+        acc?.authMode === WhatsAppAuthMode.CLOUD_API || envCloud,
       manualSendOnly: acc?.authMode === WhatsAppAuthMode.CLICK_TO_CHAT,
     };
   }
@@ -170,27 +162,10 @@ export class WhatsAppService implements OnModuleInit {
     return this.getStatus(companyId);
   }
 
-  async connectMock(companyId: string) {
-    if (!this.mockAllowed()) {
-      throw new BadRequestException('WhatsApp mock is disabled');
-    }
-    const acc = await this.accountModel
-      .findOneAndUpdate(
-        { companyId },
-        {
-          companyId: new Types.ObjectId(companyId),
-          status: WhatsAppAccountStatus.CONNECTED,
-          authMode: WhatsAppAuthMode.MOCK,
-          displayName: 'Mock WhatsApp (auto-send)',
-          cloudTokenEnc: null,
-          phoneNumberId: null,
-          paymentTemplate: null,
-          connectedAt: new Date(),
-        },
-        { upsert: true, new: true },
-      )
-      .exec();
-    return this.getStatus(companyId);
+  async connectMock(_companyId: string) {
+    throw new BadRequestException(
+      'WhatsApp mock is disabled — connect Cloud API or use click-to-chat',
+    );
   }
 
   async connectCloudApi(
@@ -360,35 +335,11 @@ export class WhatsAppService implements OnModuleInit {
         };
       }
       this.logger.warn(
-        `Cloud API failed, trying mock/fallback: ${cloud.error}`,
+        `Cloud API failed, falling back to wa.me link: ${cloud.error}`,
       );
     }
 
-    if (creds.mode === 'mock' || this.mockAllowed()) {
-      const msg = await this.persistMessage({
-        companyId: opts.companyId,
-        toPhone,
-        body: message,
-        payUrl: opts.payUrl,
-        checkoutSessionId: opts.checkoutSessionId,
-        status: WhatsAppMessageStatus.SENT,
-        providerMode: 'mock',
-        providerMessageId: `mock_wa_${Date.now()}`,
-        failureReason: null,
-      });
-      this.logger.log(
-        `WhatsApp AUTO-SENT (mock) → ${toPhone} | ${opts.payUrl}`,
-      );
-      return {
-        sent: true,
-        shareUrl,
-        mode: 'mock',
-        toPhone,
-        messageId: String(msg._id),
-      };
-    }
-
-    // Last resort — should rarely happen if mock is on in non-prod
+    // No mock auto-send — staff share the wa.me link when Cloud API is unavailable.
     await this.persistMessage({
       companyId: opts.companyId,
       toPhone,
@@ -424,17 +375,15 @@ export class WhatsAppService implements OnModuleInit {
       ),
     });
     const shareUrl = await this.buildShareUrl(opts.companyId, opts.phone, body);
-    if (
-      this.mockAllowed() ||
-      (await this.resolveCredentials(opts.companyId)).mode !== 'none'
-    ) {
+    const creds = await this.resolveCredentials(opts.companyId);
+    if (creds.mode !== 'none') {
       await this.persistMessage({
         companyId: opts.companyId,
         toPhone,
         body,
         payUrl: null,
         status: WhatsAppMessageStatus.SENT,
-        providerMode: this.mockAllowed() ? 'mock' : 'cloud_api',
+        providerMode: 'cloud_api',
         providerMessageId: `fail_notice_${Date.now()}`,
         failureReason: null,
       });
@@ -458,10 +407,6 @@ export class WhatsAppService implements OnModuleInit {
       .exec();
   }
 
-  private mockAllowed(): boolean {
-    return this.runtime.whatsappMockAllowed();
-  }
-
   private hasEnvCloud(): boolean {
     return !!(
       this.config.get('WHATSAPP_CLOUD_TOKEN') &&
@@ -471,7 +416,7 @@ export class WhatsAppService implements OnModuleInit {
   }
 
   private async resolveCredentials(companyId: string): Promise<{
-    mode: 'cloud_api' | 'mock' | 'none';
+    mode: 'cloud_api' | 'none';
     token?: string;
     phoneNumberId?: string;
     template?: string;
@@ -493,12 +438,6 @@ export class WhatsAppService implements OnModuleInit {
         language: acc.templateLanguage || 'en',
       };
     }
-    if (
-      acc?.status === WhatsAppAccountStatus.CONNECTED &&
-      acc.authMode === WhatsAppAuthMode.MOCK
-    ) {
-      return { mode: 'mock' };
-    }
     if (this.hasEnvCloud()) {
       return {
         mode: 'cloud_api',
@@ -508,7 +447,6 @@ export class WhatsAppService implements OnModuleInit {
         language: this.config.get('WHATSAPP_TEMPLATE_LANGUAGE') || 'en',
       };
     }
-    if (this.mockAllowed()) return { mode: 'mock' };
     return { mode: 'none' };
   }
 

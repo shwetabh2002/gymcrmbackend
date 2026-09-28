@@ -48,7 +48,7 @@ export class PlatformChargingService {
 
   /**
    * Our own Razorpay keys — separate from anything a gym connects.
-   * Falls back to mock outside production so the whole flow is testable.
+   * Real keys only; no mock fallback (signup → trial → live mandate → webhook).
    */
   private credentials(): RazorpayCredentials {
     const keyId = (
@@ -59,8 +59,6 @@ export class PlatformChargingService {
     ).trim();
 
     if (keyId && keySecret) return { mode: 'api_keys', keyId, keySecret };
-
-    if (this.runtime.mockAllowed()) return { mode: 'mock' };
 
     throw new BadRequestException(
       'Platform billing is not configured — set PLATFORM_RAZORPAY_KEY_ID and PLATFORM_RAZORPAY_KEY_SECRET',

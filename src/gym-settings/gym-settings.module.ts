@@ -8,6 +8,7 @@ import {
 } from './schemas/gym-settings.schema';
 import { Company, CompanySchema } from '../companies/schemas/company.schema';
 import { StorageModule } from '../storage/storage.module';
+import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { StorageModule } from '../storage/storage.module';
       { name: Company.name, schema: CompanySchema },
     ]),
     StorageModule,
+    ActivityLogsModule,
   ],
   controllers: [GymSettingsController],
   providers: [GymSettingsService],

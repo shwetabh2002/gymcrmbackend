@@ -34,6 +34,7 @@ import { CRM_ROUTES } from '../config/crm-routes.config';
 import { CompanyContextService } from '../common/company-context/company-context.service';
 import { PlatformBillingService } from '../platform-billing/platform-billing.service';
 import { getCountry, normalizeCountryCode } from '../config/countries.config';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
 @Injectable()
 export class CompaniesService {
@@ -52,6 +53,7 @@ export class CompaniesService {
     private runtime: RuntimeService,
     private companyContext: CompanyContextService,
     private platformBilling: PlatformBillingService,
+    private activityLogs: ActivityLogsService,
   ) {}
 
   private slugify(name: string): string {
@@ -319,6 +321,21 @@ export class CompaniesService {
     user.activeCompanyId = company._id as any;
     user.activeLocationId = null; // all locations until they pick one
     await user.save();
+
+    await this.activityLogs.log({
+      companyId: String(company._id),
+      actor: {
+        userId: String(user._id),
+        name: user.name || 'SUPER_ADMIN',
+        email: user.email || null,
+        role: user.role || 'SUPER_ADMIN',
+      },
+      action: 'COMPANY_SELECTED',
+      entityType: 'company',
+      entityId: String(company._id),
+      summary: `SUPER_ADMIN switched into gym ${company.name}`,
+      metadata: { companyName: company.name },
+    });
 
     return this.authService.loginAsUser(user);
   }

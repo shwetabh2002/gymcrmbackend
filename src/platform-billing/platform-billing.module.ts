@@ -30,6 +30,7 @@ import {
 } from './platform-billing.controller';
 import { PaymentProviderModule } from '../payment-provider/payment-provider.module';
 import { CountersModule } from '../counters/counters.module';
+import { ActivityLogsModule } from '../activity-logs/activity-logs.module';
 import {
   GymSettings,
   GymSettingsSchema,
@@ -54,6 +55,7 @@ import {
     ]),
     PaymentProviderModule,
     CountersModule,
+    ActivityLogsModule,
   ],
   providers: [
     PlatformPlansService,

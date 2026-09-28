@@ -120,6 +120,11 @@ export class PaymentsService {
         `Member with ID ${createDto.memberId} not found`,
       );
     }
+    if (String(subscription.memberId) !== String(createDto.memberId)) {
+      throw new BadRequestException(
+        'memberId does not match this subscription',
+      );
+    }
 
     const receivedBy = await this.userModel.findById(receivedById).exec();
     if (!receivedBy) {

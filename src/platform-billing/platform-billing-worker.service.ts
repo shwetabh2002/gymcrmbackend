@@ -4,7 +4,6 @@ import {
   OnModuleDestroy,
   OnModuleInit,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { PlatformBillingService } from './platform-billing.service';
 import { PlatformChargingService } from './platform-charging.service';
 import { JobLockService } from '../common/locks/job-lock.service';
@@ -45,38 +44,33 @@ export class PlatformBillingWorkerService
 {
   private readonly logger = new Logger(PlatformBillingWorkerService.name);
   private timer: ReturnType<typeof setInterval> | null = null;
+  private running = false;
 
   constructor(
     private billing: PlatformBillingService,
     private charging: PlatformChargingService,
     private jobLock: JobLockService,
     private emailTemplates: EmailTemplatesService,
-    private config: ConfigService,
     private runtime: RuntimeService,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
   onModuleInit() {
-    if (this.config.get('PLATFORM_BILLING_ENABLED') === 'false') {
-      this.logger.log('Platform billing worker disabled');
-      return;
-    }
-    const ms =
-      Number(this.config.get('PLATFORM_BILLING_INTERVAL_MS')) ||
-      BILLING_SWEEP_INTERVAL_MS;
+    const ms = BILLING_SWEEP_INTERVAL_MS;
     this.timer = setInterval(() => void this.sweep(), ms);
+    if (typeof (this.timer as any).unref === 'function') {
+      (this.timer as any).unref();
+    }
     this.logger.log(`Platform billing worker interval ${ms}ms`);
   }
 
   onModuleDestroy() {
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
 
   async sweep(): Promise<BillingSweepSummary> {
-    const result = await this.jobLock.runExclusively(BILLING_LOCK_KEY, () =>
-      this.run(),
-    );
-    if (result === null) {
+    if (this.running) {
       return {
         trialsExpired: 0,
         renewalsCharged: 0,
@@ -86,7 +80,25 @@ export class PlatformBillingWorkerService
         alreadyRunning: true,
       };
     }
-    return result;
+    this.running = true;
+    try {
+      const result = await this.jobLock.runExclusively(BILLING_LOCK_KEY, () =>
+        this.run(),
+      );
+      if (result === null) {
+        return {
+          trialsExpired: 0,
+          renewalsCharged: 0,
+          retriesCharged: 0,
+          failed: 0,
+          remindersSent: 0,
+          alreadyRunning: true,
+        };
+      }
+      return result;
+    } finally {
+      this.running = false;
+    }
   }
 
   private async run(): Promise<BillingSweepSummary> {

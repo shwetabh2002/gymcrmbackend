@@ -30,6 +30,7 @@ import { getUploadLimits } from '../config/upload.config';
 import { ParseMongoIdPipe } from '../common/pipes/parse-mongo-id.pipe';
 import { PaymentListQueryDto } from '../common/pagination/pagination';
 import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
+import { actorFromRequest } from '../common/utils/actor-from-request';
 
 @Controller('payments')
 @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
@@ -50,10 +51,7 @@ export class PaymentsController {
       companyId,
       createDto,
       req.user.userId,
-      {
-        userId: req.user.userId,
-        name: req.user.name || req.user.email || 'Unknown',
-      },
+      actorFromRequest(req.user)!,
       writeLocationId,
     );
   }
@@ -139,10 +137,7 @@ export class PaymentsController {
       companyId,
       id,
       updateDto,
-      {
-        userId: req.user.userId,
-        name: req.user.name || req.user.email || 'Unknown',
-      },
+      actorFromRequest(req.user)!,
       locScope,
     );
   }
@@ -159,10 +154,7 @@ export class PaymentsController {
     await this.paymentsService.delete(
       companyId,
       id,
-      {
-        userId: req.user.userId,
-        name: req.user.name || req.user.email || 'Unknown',
-      },
+      actorFromRequest(req.user)!,
       locScope,
     );
     return { message: 'Payment deleted successfully' };

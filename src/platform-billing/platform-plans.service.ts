@@ -19,6 +19,7 @@ import {
   YEARLY_MONTHS_CHARGED,
   computePeriodAmount,
 } from '../config/platform-billing.config';
+import { ActivityLogsService } from '../activity-logs/activity-logs.service';
 
 /**
  * The plans table: what the platform sells.
@@ -34,6 +35,7 @@ export class PlatformPlansService implements OnModuleInit {
   constructor(
     @InjectModel(PlatformPlan.name)
     private planModel: Model<PlatformPlanDocument>,
+    private activityLogs: ActivityLogsService,
   ) {}
 
   /**
@@ -133,6 +135,10 @@ export class PlatformPlansService implements OnModuleInit {
       .lean()
       .exec();
     if (!plan) throw new NotFoundException('Plan not found');
+    // Feature bundle edits can change ACTIVITY_LOGS entitlement for many gyms.
+    if (rest.features !== undefined) {
+      this.activityLogs.invalidateAccessCache();
+    }
     return this.toClient(plan);
   }
 

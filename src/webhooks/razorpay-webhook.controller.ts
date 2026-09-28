@@ -293,54 +293,12 @@ export class RazorpayWebhookController {
   }
 
   /**
-   * Dev-only stand-in for the member's UPI app: opening this finalizes the
-   * checkout exactly like a real webhook would. Hard-disabled in production.
+   * Dev-only stand-in removed — payments finalize only via real Razorpay webhooks.
    */
   @Get('mock-pay/:paymentLinkId')
-  async mockPay(
-    @Param('paymentLinkId') paymentLinkId: string,
-    @Query('token') withToken: string,
-    @Res() res: any,
-  ) {
-    if (!this.runtime.mockAllowed()) {
-      throw new ForbiddenException('Mock payments are disabled');
-    }
-
-    const session = await this.sessionModel
-      .findOne({
-        $or: [
-          { razorpayPaymentLinkId: paymentLinkId },
-          { razorpayAuthLinkId: paymentLinkId },
-        ],
-      })
-      .exec();
-    if (!session) {
-      throw new NotFoundException('Unknown mock payment link');
-    }
-
-    const companyId = String(session.companyId);
-    const isAuthLink = session.razorpayAuthLinkId === paymentLinkId;
-    const wantsToken = isAuthLink || session.enableAutopay || withToken === '1';
-
-    await this.checkout.finalizeFromWebhook({
-      companyId,
-      sessionId: session.sessionId,
-      paymentLinkId: session.razorpayPaymentLinkId || undefined,
-      authLinkId: session.razorpayAuthLinkId || undefined,
-      orderId: session.razorpayOrderId || undefined,
-      paymentId: `pay_mock_${paymentLinkId}`,
-      tokenId: wantsToken
-        ? `token_mock_${session.sessionId.slice(0, 8)}`
-        : null,
-      customerId: session.razorpayCustomerId,
-    });
-
-    const query = new URLSearchParams({
-      [CRM_QUERY.checkoutSession]: session.sessionId,
-      [CRM_QUERY.paid]: '1',
-    });
-    return res.redirect(
-      this.runtime.crmUrl(`${CRM_ROUTES.members}?${query.toString()}`),
+  async mockPay() {
+    throw new ForbiddenException(
+      'Mock pay is disabled — complete payment in the UPI app; activation happens via Razorpay webhook',
     );
   }
 }

@@ -32,10 +32,11 @@ import {
 import { getUploadLimits } from '../config/upload.config';
 import { MemberListQueryDto } from '../common/pagination/pagination';
 import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
+import { actorFromRequest } from '../common/utils/actor-from-request';
 
 function actorFromReq(req: any) {
   return req?.user
-    ? { userId: req.user.userId, name: req.user.name || req.user.email }
+    ? actorFromRequest(req.user)!
     : undefined;
 }
 

@@ -22,6 +22,8 @@ export const PLATFORM_FEATURES = [
   'MULTI_BRANCH',
   /** Staff accounts with per-permission access. */
   'STAFF_RBAC',
+  /** Paid activity / audit log with time-based retention. */
+  'ACTIVITY_LOGS',
 ] as const;
 export type PlatformFeature = (typeof PLATFORM_FEATURES)[number];
 
@@ -59,8 +61,17 @@ export const WRITABLE_STATUSES: BillingStatus[] = [
   'PAST_DUE',
 ];
 
-export function canWrite(status: BillingStatus | undefined | null): boolean {
-  return !!status && WRITABLE_STATUSES.includes(status);
+export function canWrite(
+  status: BillingStatus | undefined | null,
+  trialEndsAt?: Date | string | null,
+): boolean {
+  if (!status || !WRITABLE_STATUSES.includes(status)) return false;
+  // Expired trial must not stay writable just because status was never flipped.
+  if (status === 'TRIALING' && trialEndsAt) {
+    const end = new Date(trialEndsAt).getTime();
+    if (!Number.isNaN(end) && end < Date.now()) return false;
+  }
+  return true;
 }
 
 /** Default free window when no plan says otherwise. */
@@ -78,6 +89,12 @@ export const DUNNING_GRACE_MS = 2 * DAY_MS;
 
 /** How often the billing sweep runs. */
 export const BILLING_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * GST on our own subscription invoices to gyms (SaaS in India).
+ * Rate lives in code — not an env toggle.
+ */
+export const PLATFORM_TAX_PERCENTAGE = 18;
 
 /** Lease key so only one instance sweeps platform billing. */
 export const BILLING_LOCK_KEY = 'platform-billing-sweep';
@@ -133,6 +150,7 @@ export const SEED_PLATFORM_PLANS = [
       'EMAIL_TEMPLATES',
       'MULTI_BRANCH',
       'STAFF_RBAC',
+      'ACTIVITY_LOGS',
     ] as PlatformFeature[],
     maxBranches: null,
     maxMembers: null,

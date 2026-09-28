@@ -1,5 +1,6 @@
 import {
   BadGatewayException,
+  BadRequestException,
   Injectable,
   Logger,
   ServiceUnavailableException,
@@ -221,6 +222,15 @@ export class RazorpayApiService {
     return {};
   }
 
+  /** Mock credentials are never accepted — live Razorpay only. */
+  private assertLive(creds: RazorpayCredentials): void {
+    if (creds.mode === 'mock') {
+      throw new BadRequestException(
+        'Mock Razorpay is disabled — connect live OAuth or API keys',
+      );
+    }
+  }
+
   private async call<T>(
     creds: RazorpayCredentials,
     method: 'GET' | 'POST' | 'DELETE',
@@ -268,9 +278,7 @@ export class RazorpayApiService {
     creds: RazorpayCredentials,
     input: { name: string; contact: string; email?: string },
   ): Promise<string | null> {
-    if (creds.mode === 'mock') {
-      return `cust_mock_${randomBytes(4).toString('hex')}`;
-    }
+    this.assertLive(creds);
     try {
       const data = await this.call<{ id: string }>(
         creds,
@@ -301,18 +309,7 @@ export class RazorpayApiService {
     creds: RazorpayCredentials,
     input: CreatePaymentLinkInput,
   ): Promise<CreatePaymentLinkResult> {
-    if (creds.mode === 'mock') {
-      const id = `plink_mock_${randomBytes(6).toString('hex')}`;
-      const shortUrl = this.runtime.razorpayMockPayUrl(id, false);
-      return {
-        id,
-        shortUrl,
-        orderId: `order_mock_${randomBytes(6).toString('hex')}`,
-        customerId: `cust_mock_${randomBytes(4).toString('hex')}`,
-        qrData: shortUrl,
-        mock: true,
-      };
-    }
+    this.assertLive(creds);
 
     const data = await this.call<any>(
       creds,
@@ -359,22 +356,7 @@ export class RazorpayApiService {
     input: CreateAuthLinkInput,
   ): Promise<CreateAuthLinkResult> {
     const method: MandateMethod = input.method || DEFAULT_MANDATE_METHOD;
-
-    if (creds.mode === 'mock') {
-      const id = `inv_mock_${randomBytes(6).toString('hex')}`;
-      const shortUrl = this.runtime.razorpayMockPayUrl(id, true);
-      return {
-        id,
-        shortUrl,
-        orderId: `order_mock_${randomBytes(6).toString('hex')}`,
-        customerId: `cust_mock_${randomBytes(4).toString('hex')}`,
-        qrData: shortUrl,
-        maxAmountPaise: input.maxAmountPaise,
-        mandateExpireAt: input.mandateExpireAt,
-        method,
-        mock: true,
-      };
-    }
+    this.assertLive(creds);
 
     const data = await this.call<any>(creds, 'POST', RAZORPAY_PATHS.authLinks, {
       customer: {
@@ -431,13 +413,7 @@ export class RazorpayApiService {
       notes?: Record<string, string>;
     },
   ): Promise<ChargeTokenResult> {
-    if (creds.mode === 'mock') {
-      return {
-        paymentId: `pay_mock_${randomBytes(6).toString('hex')}`,
-        orderId: `order_mock_${randomBytes(6).toString('hex')}`,
-        status: RAZORPAY_PAYMENT_STATUS.captured,
-      };
-    }
+    this.assertLive(creds);
 
     const order = await this.call<any>(creds, 'POST', RAZORPAY_PATHS.orders, {
       amount: input.amountPaise,
@@ -478,7 +454,7 @@ export class RazorpayApiService {
     customerId: string,
     tokenId: string,
   ): Promise<boolean> {
-    if (creds.mode === 'mock') return true;
+    this.assertLive(creds);
     if (!customerId || !tokenId) return false;
     await this.call(
       creds,
@@ -493,9 +469,7 @@ export class RazorpayApiService {
     customerId: string,
     tokenId: string,
   ): Promise<any | null> {
-    if (creds.mode === 'mock') {
-      return { id: tokenId, recurring_status: 'confirmed' };
-    }
+    this.assertLive(creds);
     if (!customerId || !tokenId) return null;
     try {
       return await this.call<any>(

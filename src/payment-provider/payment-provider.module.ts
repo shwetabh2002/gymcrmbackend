@@ -9,6 +9,10 @@ import { PaymentProviderService } from './payment-provider.service';
 import { PaymentProviderController } from './payment-provider.controller';
 import { RazorpayApiService } from './razorpay-api.service';
 import { TokenEncryptionService } from '../common/crypto/token-encryption.service';
+import {
+  GymSettings,
+  GymSettingsSchema,
+} from '../gym-settings/schemas/gym-settings.schema';
 
 @Module({
   imports: [
@@ -18,6 +22,7 @@ import { TokenEncryptionService } from '../common/crypto/token-encryption.servic
         schema: PaymentProviderAccountSchema,
       },
       { name: OAuthState.name, schema: OAuthStateSchema },
+      { name: GymSettings.name, schema: GymSettingsSchema },
     ]),
   ],
   providers: [

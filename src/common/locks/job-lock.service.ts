@@ -6,7 +6,7 @@ import { JobLock, JobLockDocument } from './job-lock.schema';
 import { MINUTE_MS } from '../../config/time.constants';
 
 /** How long a lease is held before it is considered abandoned. */
-export const DEFAULT_LOCK_TTL_MS = 15 * MINUTE_MS;
+export const DEFAULT_LOCK_TTL_MS = 60 * MINUTE_MS;
 
 /** Identifies this process in a lease, for diagnosing a stuck job. */
 const OWNER = `${hostname()}#${process.pid}`;
@@ -63,9 +63,28 @@ export class JobLockService {
 
     if (!acquired) return null;
 
+    // Renew the lease while work runs so a long autopay/billing sweep cannot
+    // outlive the TTL and let another instance overlap.
+    const heartbeatMs = Math.max(5_000, Math.floor(ttlMs / 3));
+    const heartbeat = setInterval(() => {
+      const nextExpiry = new Date(Date.now() + ttlMs);
+      void this.lockModel
+        .updateOne({ key, owner: OWNER }, { $set: { expiresAt: nextExpiry } })
+        .exec()
+        .catch((err) =>
+          this.logger.warn(
+            `${key}: heartbeat failed: ${err?.message || err}`,
+          ),
+        );
+    }, heartbeatMs);
+    if (typeof (heartbeat as any).unref === 'function') {
+      (heartbeat as any).unref();
+    }
+
     try {
       return await work();
     } finally {
+      clearInterval(heartbeat);
       await this.lockModel
         .deleteOne({ key, owner: OWNER })
         .exec()

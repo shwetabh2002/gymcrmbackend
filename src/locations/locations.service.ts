@@ -16,6 +16,7 @@ import { CreateLocationDto, UpdateLocationDto } from './dto/location.dto';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Role } from '../common/enums/role.enum';
 import { AuthService } from '../auth/auth.service';
+import { PlatformBillingService } from '../platform-billing/platform-billing.service';
 
 @Injectable()
 export class LocationsService {
@@ -25,6 +26,7 @@ export class LocationsService {
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
     private authService: AuthService,
+    private billing: PlatformBillingService,
   ) {}
 
   private toClient(loc: any) {
@@ -97,13 +99,21 @@ export class LocationsService {
       dto.code?.trim() || name,
     );
 
+    const count = await this.locationModel.countDocuments({ companyId }).exec();
+    const snapshot = await this.billing.snapshot(companyId);
+    const maxBranches = snapshot.maxBranches;
+    if (maxBranches != null && count >= maxBranches) {
+      throw new ForbiddenException(
+        `Your ${snapshot.planName} plan allows ${maxBranches} branch${maxBranches === 1 ? '' : 'es'}. Upgrade in Settings → Subscription to add more.`,
+      );
+    }
+
     if (dto.isDefault) {
       await this.locationModel
         .updateMany({ companyId }, { $set: { isDefault: false } })
         .exec();
     }
 
-    const count = await this.locationModel.countDocuments({ companyId }).exec();
     const loc = await this.locationModel.create({
       companyId: new Types.ObjectId(companyId),
       name,

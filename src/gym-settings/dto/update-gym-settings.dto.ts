@@ -188,4 +188,20 @@ export class UpdateGymSettingsDto {
   @IsOptional()
   @IsBoolean()
   featureEmailTemplatesUnlocked?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  featureActivityLogsUnlocked?: boolean;
+
+  /** Gym dynamic on/off (requires entitlement + backend master on). */
+  @IsOptional()
+  @IsBoolean()
+  activityLogsEnabled?: boolean;
+
+  /** Retention window in days (7–365). SUPER_ADMIN only. */
+  @IsOptional()
+  @IsNumber()
+  @Min(7)
+  @Max(365)
+  activityLogRetentionDays?: number;
 }

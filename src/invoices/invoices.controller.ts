@@ -23,6 +23,7 @@ import { CompanyId } from '../common/tenant/company-id.decorator';
 import { LocationScope } from '../common/tenant/location.decorator';
 import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
 import { PaginationQueryDto } from '../common/pagination/pagination';
+import { actorFromRequest } from '../common/utils/actor-from-request';
 
 @Controller('invoices')
 @UseGuards(JwtAuthGuard, SubscriptionGuard, PermissionsGuard)
@@ -43,10 +44,7 @@ export class InvoicesController {
       companyId,
       createDto,
       req.user.userId,
-      {
-        userId: req.user.userId,
-        name: req.user.name || req.user.email || 'Unknown',
-      },
+      actorFromRequest(req.user)!,
       writeLocationId,
     );
   }
@@ -109,10 +107,7 @@ export class InvoicesController {
     @Body() updateDto: UpdateInvoiceDto,
     @Request() req: any,
   ) {
-    return this.invoicesService.update(companyId, id, updateDto, locScope, {
-      userId: req.user.userId,
-      name: req.user.name,
-    });
+    return this.invoicesService.update(companyId, id, updateDto, locScope, actorFromRequest(req.user)!);
   }
 
   @Delete(':id')

@@ -163,7 +163,21 @@ export class CheckoutService {
       .exec();
     if (!plan) throw new NotFoundException('Plan not found');
 
-    const amount = dto.amount ?? plan.price;
+    // Catalog price is authoritative — client may only discount (≤ plan.price), never inflate.
+    const catalogPrice = Number(plan.price);
+    const asked =
+      dto.amount != null && !Number.isNaN(Number(dto.amount))
+        ? Number(dto.amount)
+        : catalogPrice;
+    if (asked < 0) {
+      throw new BadRequestException('amount cannot be negative');
+    }
+    if (asked > catalogPrice + 0.01) {
+      throw new BadRequestException(
+        `amount cannot exceed plan price ${await this.companyContext.formatMoney(companyId, catalogPrice)}`,
+      );
+    }
+    const amount = asked;
     const received = dto.received;
     if (received <= 0 || received > amount) {
       throw new BadRequestException(

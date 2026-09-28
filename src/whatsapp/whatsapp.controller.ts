@@ -16,6 +16,7 @@ import { RequirePermissions } from '../common/decorators/permissions.decorator';
 import { Permission } from '../common/enums/permission.enum';
 import { CompanyId } from '../common/tenant/company-id.decorator';
 import { SubscriptionGuard } from '../platform-billing/guards/subscription.guard';
+import { RequiresFeature } from '../platform-billing/decorators/billing.decorators';
 
 class ConnectCloudDto {
   @IsString()
@@ -60,6 +61,7 @@ export class WhatsAppController {
   }
 
   @Post('mock')
+  @RequiresFeature('WHATSAPP_CLOUD')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   connectMock(@CompanyId() companyId: string) {
@@ -68,6 +70,7 @@ export class WhatsAppController {
 
   /** Gym's own number, staff taps Send — no Meta Cloud API needed. */
   @Post('click-to-chat')
+  @RequiresFeature('WHATSAPP_CLOUD')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   connectClickToChat(
@@ -78,6 +81,7 @@ export class WhatsAppController {
   }
 
   @Post('cloud')
+  @RequiresFeature('WHATSAPP_CLOUD')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   connectCloud(@CompanyId() companyId: string, @Body() body: ConnectCloudDto) {
@@ -85,6 +89,7 @@ export class WhatsAppController {
   }
 
   @Post('disconnect')
+  @RequiresFeature('WHATSAPP_CLOUD')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
   disconnect(@CompanyId() companyId: string) {

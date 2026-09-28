@@ -22,6 +22,11 @@ import {
   isInvoiceTaxMode,
 } from '../invoices/tax.util';
 import { Role } from '../common/enums/role.enum';
+import {
+  ActivityLogsService,
+  ActivityActor,
+} from '../activity-logs/activity-logs.service';
+import { PlatformBillingService } from '../platform-billing/platform-billing.service';
 
 type BrandAssetKind = 'logo' | 'favicon' | 'stamp';
 
@@ -40,6 +45,8 @@ export class GymSettingsService {
     private companyModel: Model<CompanyDocument>,
     private storageService: StorageService,
     private companyContext: CompanyContextService,
+    private activityLogs: ActivityLogsService,
+    private billing: PlatformBillingService,
   ) {}
 
   private async toClient(doc: any) {
@@ -102,6 +109,12 @@ export class GymSettingsService {
       featureRazorpayUnlocked: doc.featureRazorpayUnlocked === true,
       featureWhatsappUnlocked: doc.featureWhatsappUnlocked === true,
       featureEmailTemplatesUnlocked: doc.featureEmailTemplatesUnlocked === true,
+      featureActivityLogsUnlocked: doc.featureActivityLogsUnlocked === true,
+      activityLogsEnabled: doc.activityLogsEnabled === true,
+      activityLogRetentionDays:
+        typeof doc.activityLogRetentionDays === 'number'
+          ? doc.activityLogRetentionDays
+          : 30,
       countryCode: country.code,
       countryName: country.name,
       currency: country.currency,
@@ -142,7 +155,10 @@ export class GymSettingsService {
     );
   }
 
-  /** Platform feature lock — unlocked per gym by SUPER_ADMIN. */
+  /**
+   * Platform feature lock — unlocked per gym by SUPER_ADMIN or included in plan.
+   * Razorpay: unlock flag OR Autopay (plan/unlock), since Autopay needs Razorpay.
+   */
   async assertFeatureUnlocked(
     companyId: string,
     feature:
@@ -151,31 +167,48 @@ export class GymSettingsService {
       | 'whatsapp'
       | 'emailTemplates',
   ): Promise<void> {
-    const cid = new Types.ObjectId(companyId);
-    const field =
-      feature === 'autopay'
-        ? 'featureAutopayUnlocked'
-        : feature === 'razorpay'
-          ? 'featureRazorpayUnlocked'
-          : feature === 'whatsapp'
-            ? 'featureWhatsappUnlocked'
-            : 'featureEmailTemplatesUnlocked';
-    const doc = await this.settingsModel
-      .findOne({ companyId: cid })
-      .select(field)
-      .lean()
-      .exec();
-    if ((doc as any)?.[field] !== true) {
+    if (feature === 'autopay') {
+      if (await this.billing.hasFeature(companyId, 'AUTOPAY')) return;
       throw new ForbiddenException(
-        `${feature} is locked for this gym — ask platform admin to unlock it`,
+        'Autopay is locked for this gym — ask platform admin to unlock it',
       );
     }
+    if (feature === 'whatsapp') {
+      if (await this.billing.hasFeature(companyId, 'WHATSAPP_CLOUD')) return;
+      throw new ForbiddenException(
+        'WhatsApp is locked for this gym — ask platform admin to unlock it',
+      );
+    }
+    if (feature === 'emailTemplates') {
+      if (await this.billing.hasFeature(companyId, 'EMAIL_TEMPLATES')) return;
+      throw new ForbiddenException(
+        'Email templates are locked for this gym — ask platform admin to unlock them',
+      );
+    }
+    // razorpay
+    const cid = new Types.ObjectId(companyId);
+    const doc = await this.settingsModel
+      .findOne({ companyId: cid })
+      .select('featureRazorpayUnlocked featureAutopayUnlocked')
+      .lean()
+      .exec();
+    if (
+      doc?.featureRazorpayUnlocked === true ||
+      doc?.featureAutopayUnlocked === true
+    ) {
+      return;
+    }
+    if (await this.billing.hasFeature(companyId, 'AUTOPAY')) return;
+    throw new ForbiddenException(
+      'Razorpay is locked for this gym — ask platform admin to unlock it',
+    );
   }
 
   async update(
     companyId: string,
     dto: UpdateGymSettingsDto,
     actorRole?: string,
+    actor?: ActivityActor,
   ) {
     const cid = new Types.ObjectId(companyId);
     const update: Record<string, unknown> = { companyId: cid };
@@ -269,6 +302,7 @@ export class GymSettingsService {
       'featureRazorpayUnlocked',
       'featureWhatsappUnlocked',
       'featureEmailTemplatesUnlocked',
+      'featureActivityLogsUnlocked',
     ] as const;
     const wantsUnlockChange = unlockKeys.some((k) => dto[k] !== undefined);
     if (wantsUnlockChange && actorRole !== Role.SUPER_ADMIN) {
@@ -282,6 +316,40 @@ export class GymSettingsService {
     // Autopay needs Razorpay — unlocking Autopay unlocks Razorpay too
     if (dto.featureAutopayUnlocked === true) {
       update.featureRazorpayUnlocked = true;
+    }
+    if (dto.activityLogRetentionDays !== undefined) {
+      if (actorRole !== Role.SUPER_ADMIN) {
+        throw new ForbiddenException(
+          'Only SUPER_ADMIN can set activity log retention',
+        );
+      }
+      update.activityLogRetentionDays = dto.activityLogRetentionDays;
+    }
+    if (dto.activityLogsEnabled !== undefined) {
+      if (dto.activityLogsEnabled === true) {
+        const access = await this.activityLogs.getAccess(companyId);
+        if (!access.globallyEnabled) {
+          throw new ForbiddenException(
+            'Activity logs are disabled on the server (ACTIVITY_LOGS_ENABLED)',
+          );
+        }
+        // Post-dto entitlement — don't treat a same-request lock as still entitled.
+        const unlockedAfter =
+          dto.featureActivityLogsUnlocked !== undefined
+            ? dto.featureActivityLogsUnlocked === true
+            : access.featureUnlocked;
+        const entitled = unlockedAfter || access.planIncludes;
+        if (!entitled) {
+          throw new ForbiddenException(
+            "Activity log is not on this gym's plan and is not unlocked — cannot turn ON",
+          );
+        }
+      }
+      update.activityLogsEnabled = dto.activityLogsEnabled;
+    }
+    // Locking Activity log also turns the gym switch OFF (mirror Autopay).
+    if (dto.featureActivityLogsUnlocked === false) {
+      update.activityLogsEnabled = false;
     }
 
     // Resolve whether Autopay module will be unlocked after this write
@@ -326,6 +394,40 @@ export class GymSettingsService {
         setDefaultsOnInsert: true,
       })
       .exec();
+
+    // Invalidate after write so concurrent getAccess cannot re-cache stale flags.
+    if (
+      wantsUnlockChange ||
+      dto.activityLogRetentionDays !== undefined ||
+      dto.activityLogsEnabled !== undefined ||
+      dto.featureActivityLogsUnlocked !== undefined
+    ) {
+      this.activityLogs.invalidateAccessCache(companyId);
+    }
+
+    if (wantsUnlockChange && actor) {
+      const changed: Record<string, unknown> = {};
+      for (const k of unlockKeys) {
+        if (dto[k] !== undefined) changed[k] = dto[k] === true;
+      }
+      if (dto.activityLogRetentionDays !== undefined) {
+        changed.activityLogRetentionDays = dto.activityLogRetentionDays;
+      }
+      if (dto.activityLogsEnabled !== undefined) {
+        changed.activityLogsEnabled = update.activityLogsEnabled === true;
+      }
+      await this.activityLogs.log({
+        companyId,
+        actor,
+        action: 'FEATURE_UNLOCKS_UPDATED',
+        entityType: 'gym_settings',
+        entityId: companyId,
+        summary: `Feature unlocks updated: ${Object.entries(changed)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(', ')}`,
+        metadata: changed,
+      });
+    }
 
     if (dto.gymName !== undefined && dto.gymName.trim()) {
       await this.companyModel

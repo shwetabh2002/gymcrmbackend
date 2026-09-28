@@ -298,7 +298,24 @@ export class MembersService {
     }
 
     const received = createDto.received ?? 0;
-    const planPrice = createDto.amount ?? plan.price;
+    // Catalog price is authoritative — client may only discount (≤ plan.price), never inflate.
+    const catalogPrice = Number(plan.price);
+    const asked =
+      createDto.amount != null && !Number.isNaN(Number(createDto.amount))
+        ? Number(createDto.amount)
+        : catalogPrice;
+    if (asked < 0) {
+      throw new BadRequestException('amount cannot be negative');
+    }
+    if (asked > catalogPrice + 0.01) {
+      throw new BadRequestException(
+        `amount cannot exceed plan price ${await this.companyContext.formatMoney(
+          companyId,
+          catalogPrice,
+        )}`,
+      );
+    }
+    const planPrice = asked;
     if (received < 0) {
       throw new BadRequestException('Received amount cannot be negative');
     }

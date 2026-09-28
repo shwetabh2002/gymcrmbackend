@@ -68,10 +68,9 @@ The gym pastes its signing secret into the same screen
 
 1. that gym's own secret, else
 2. `RAZORPAY_WEBHOOK_SECRET` (platform-wide), else
-3. **reject** — in production there is no implicit fallback.
+3. **reject** — no unsigned webhooks are accepted.
 
-Outside production, `RAZORPAY_SKIP_WEBHOOK_VERIFY=true` skips verification for
-local testing. In production that flag is ignored.
+Webhook signatures are always verified (`RAZORPAY_SKIP_WEBHOOK_VERIFY` is ignored).
 
 ---
 
@@ -188,13 +187,13 @@ never keeps debiting a mandate someone asked to stop.
 
 ## 5. Environment discipline
 
-| | development | production |
-|---|---|---|
-| Mock Razorpay / WhatsApp | allowed | blocked (400) |
-| `GET /webhooks/razorpay/mock-pay/:id` | live | 403 |
-| Webhook signature | skippable via flag | always verified |
-| Missing webhook secret | dev fallback | webhook rejected |
-| Dev placeholder secrets | warning only | **server refuses to boot** |
+| | all environments |
+|---|---|
+| Mock Razorpay / WhatsApp | blocked (400) — connect live OAuth / API keys / Cloud API |
+| `GET /webhooks/razorpay/mock-pay/:id` | 403 |
+| Webhook signature | always verified |
+| Missing webhook secret | webhook rejected |
+| Dev placeholder secrets | **server refuses to boot in production** |
 
 The boot check (`RuntimeService.productionProblems()`) blocks startup on
 placeholder `JWT_*` / `SESSION_SECRET` / `PAYMENT_TOKEN_ENCRYPTION_KEY`, a

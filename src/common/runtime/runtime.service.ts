@@ -1,18 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RAZORPAY_WEBHOOK_PATH } from '../../config/razorpay.config';
+import { PLATFORM_TAX_PERCENTAGE } from '../../config/platform-billing.config';
 
 /** Local development fallbacks — production always supplies real URLs. */
 const LOCAL_ORIGIN = 'http://localhost';
 const DEFAULT_PORT = 5000;
 const DEFAULT_CRM_PORT = 3000;
-const DEFAULT_MARKETING_PORT = 3001;
 
 /** Used where a provider requires an address but no member email exists. */
 const SYSTEM_EMAIL = 'noreply@gym.local';
-
-/** GST on SaaS in India. */
-const DEFAULT_PLATFORM_TAX_PCT = 18;
 
 /**
  * Env values that ship as placeholders. Production must not run on any of them.
@@ -21,8 +18,14 @@ const DEFAULT_PLATFORM_TAX_PCT = 18;
  * unused variable is noise, not safety.
  */
 const DEV_PLACEHOLDER_SECRETS: Record<string, string[]> = {
-  JWT_ACCESS_SECRET: ['your-access-secret-key-change-this-in-production'],
-  JWT_REFRESH_SECRET: ['your-refresh-secret-key-change-this-in-production'],
+  JWT_ACCESS_SECRET: [
+    'your-access-secret-key-change-this-in-production',
+    'change-me-access-secret',
+  ],
+  JWT_REFRESH_SECRET: [
+    'your-refresh-secret-key-change-this-in-production',
+    'change-me-refresh-secret',
+  ],
   PAYMENT_TOKEN_ENCRYPTION_KEY: [
     'dev-payment-token-key-change-me',
     'change-me-payment-token-key',
@@ -50,27 +53,27 @@ export class RuntimeService {
     return this.nodeEnv === 'production';
   }
 
-  /** True only outside production AND when the flag is not explicitly off. */
+  /**
+   * Mock payment providers are OFF by default.
+   * Only an explicit RAZORPAY_ALLOW_MOCK=true enables them (never in production).
+   */
   mockAllowed(): boolean {
     if (this.isProduction()) return false;
-    return this.config.get<string>('RAZORPAY_ALLOW_MOCK') !== 'false';
+    return this.config.get<string>('RAZORPAY_ALLOW_MOCK') === 'true';
   }
 
-  /** WhatsApp has its own flag but the same production rule. */
+  /** WhatsApp mock auto-send — explicit opt-in only; never in production. */
   whatsappMockAllowed(): boolean {
     if (this.isProduction()) return false;
-    const flag = this.config.get<string>('WHATSAPP_ALLOW_MOCK');
-    if (flag === 'false') return false;
-    return flag === 'true' || this.mockAllowed();
+    return this.config.get<string>('WHATSAPP_ALLOW_MOCK') === 'true';
   }
 
   /**
-   * Webhook signatures are always verified in production — the
-   * RAZORPAY_SKIP_WEBHOOK_VERIFY escape hatch only works outside production.
+   * Webhook signatures are always verified — forged payment events must not
+   * activate subscriptions or mark checkouts paid.
    */
   requireWebhookSignature(): boolean {
-    if (this.isProduction()) return true;
-    return this.config.get<string>('RAZORPAY_SKIP_WEBHOOK_VERIFY') !== 'true';
+    return true;
   }
 
   port(): number {
@@ -98,11 +101,10 @@ export class RuntimeService {
     );
   }
 
-  /** Public marketing + self-signup site. */
+  /** Public marketing + self-signup (same app as CRM after merge). */
   marketingUrl(): string {
     return RuntimeService.stripTrailingSlash(
-      this.config.get<string>('MARKETING_URL') ||
-        `${LOCAL_ORIGIN}:${DEFAULT_MARKETING_PORT}`,
+      this.config.get<string>('MARKETING_URL') || this.crmPublicUrl(),
     );
   }
 
@@ -133,12 +135,11 @@ export class RuntimeService {
   }
 
   /**
-   * GST we add to our own subscription invoices. SaaS in India is taxable, and
-   * the rate belongs in config rather than scattered through billing.
+   * GST we add to our own subscription invoices. SaaS in India is taxable;
+   * rate is a code constant (platform-billing.config), not env.
    */
   platformTaxPercentage(): number {
-    const raw = Number(this.config.get<string>('PLATFORM_TAX_PERCENTAGE'));
-    return Number.isFinite(raw) && raw >= 0 ? raw : DEFAULT_PLATFORM_TAX_PCT;
+    return PLATFORM_TAX_PERCENTAGE;
   }
 
   /** Fallback sender address for provider calls that demand one. */

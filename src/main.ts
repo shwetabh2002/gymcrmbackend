@@ -70,6 +70,9 @@ async function bootstrap() {
   );
   logger.log('✅ Global validation pipes enabled');
 
+  // So OnModuleDestroy runs on SIGTERM/SIGINT (workers clear timers, Mongo closes).
+  app.enableShutdownHooks();
+
   await app.listen(port, host);
 
   const publicUrl = runtime.backendPublicUrl();

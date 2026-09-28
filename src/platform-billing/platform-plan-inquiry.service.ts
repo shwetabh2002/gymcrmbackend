@@ -11,6 +11,10 @@ import {
   PlatformPlanInquiryDocument,
 } from './schemas/platform-plan-inquiry.schema';
 import { Company, CompanyDocument } from '../companies/schemas/company.schema';
+import {
+  ActivityLogsService,
+  ActivityActor,
+} from '../activity-logs/activity-logs.service';
 
 export type SubmitInquiryInput = {
   contactName: string;
@@ -30,12 +34,14 @@ export class PlatformPlanInquiryService {
     private inquiryModel: Model<PlatformPlanInquiryDocument>,
     @InjectModel(Company.name)
     private companyModel: Model<CompanyDocument>,
+    private activityLogs: ActivityLogsService,
   ) {}
 
   async submit(
     companyId: string,
     userId: string | undefined,
     input: SubmitInquiryInput,
+    actorName?: string,
   ) {
     const name = (input.contactName || '').trim();
     const phone = (input.contactPhone || '').trim();
@@ -70,6 +76,21 @@ export class PlatformPlanInquiryService {
       submittedByUserId: userId ? new Types.ObjectId(userId) : null,
     });
 
+    if (userId) {
+      await this.activityLogs.log({
+        companyId,
+        actor: { userId, name: actorName || name },
+        action: 'CUSTOM_INQUIRY_SUBMITTED',
+        entityType: 'platform_plan_inquiry',
+        entityId: String(doc._id),
+        summary: `Custom plan inquiry from ${name} (${phone})`,
+        metadata: {
+          branchCount: doc.branchCount,
+          needs: doc.needs,
+        },
+      });
+    }
+
     return this.toClient(doc.toObject());
   }
 
@@ -91,21 +112,34 @@ export class PlatformPlanInquiryService {
     id: string,
     status: InquiryStatus,
     adminNotes?: string,
+    actor?: ActivityActor,
   ) {
     if (!['NEW', 'CONTACTED', 'CLOSED'].includes(status)) {
       throw new BadRequestException('Invalid status');
     }
-    const patch: Record<string, unknown> = { status };
-    if (status === 'CONTACTED') patch.contactedAt = new Date();
+    const existing = await this.inquiryModel.findById(id).exec();
+    if (!existing) throw new NotFoundException('Inquiry not found');
+
+    existing.status = status;
+    if (status === 'CONTACTED') existing.contactedAt = new Date();
     if (adminNotes !== undefined) {
-      patch.adminNotes = adminNotes?.trim() || null;
+      existing.adminNotes = adminNotes?.trim() || null;
     }
-    const doc = await this.inquiryModel
-      .findByIdAndUpdate(id, patch, { returnDocument: 'after' })
-      .lean()
-      .exec();
-    if (!doc) throw new NotFoundException('Inquiry not found');
-    return this.toClient(doc);
+    await existing.save();
+
+    if (actor) {
+      await this.activityLogs.log({
+        companyId: String(existing.companyId),
+        actor,
+        action: 'CUSTOM_INQUIRY_UPDATED',
+        entityType: 'platform_plan_inquiry',
+        entityId: String(existing._id),
+        summary: `Custom inquiry marked ${status}`,
+        metadata: { status, adminNotes: existing.adminNotes },
+      });
+    }
+
+    return this.toClient(existing.toObject());
   }
 
   private toClient(doc: any) {

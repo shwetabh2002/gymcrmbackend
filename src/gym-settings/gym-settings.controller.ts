@@ -47,9 +47,19 @@ export class GymSettingsController {
   update(
     @CompanyId() companyId: string,
     @Body() dto: UpdateGymSettingsDto,
-    @CurrentUser('role') role: string,
+    @CurrentUser() user: {
+      userId: string;
+      name?: string;
+      email?: string;
+      role: string;
+    },
   ) {
-    return this.gymSettingsService.update(companyId, dto, role);
+    return this.gymSettingsService.update(companyId, dto, user.role, {
+      userId: user.userId,
+      name: user.name || user.role,
+      email: user.email || null,
+      role: user.role,
+    });
   }
 
   @Post('upload')

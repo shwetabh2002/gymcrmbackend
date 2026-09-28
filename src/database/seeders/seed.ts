@@ -8,7 +8,9 @@ config();
 async function runSeeders() {
   try {
     // Connect to MongoDB
-    await connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/backendgym');
+    await connect(
+      process.env.MONGODB_URI || 'mongodb://localhost:27017/backendgymmast',
+    );
     console.log('MongoDB connection established!');
 
     await seedAdminUser();

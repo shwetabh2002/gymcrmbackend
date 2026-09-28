@@ -74,7 +74,7 @@ should not lose its front desk the same morning.
 
 ## The sweep
 
-Runs every 6 hours (`PLATFORM_BILLING_INTERVAL_MS`), leased through
+Runs every 6 hours (`BILLING_SWEEP_INTERVAL_MS`), leased through
 `JobLockService` so several instances cannot bill the same gym:
 
 1. Trial reminders at 5, 2 and 1 days left — once each, tracked per subscription
@@ -98,7 +98,7 @@ renewal date and dunning state.
 
 ## Money on the invoice
 
-Charges carry GST (`PLATFORM_TAX_PERCENTAGE`, default 18) and their own numbering
+Charges carry GST (`PLATFORM_TAX_PERCENTAGE` in platform-billing.config, 18%) and their own numbering
 (`PLT-YYYYMMDD-NNNN`), separate from the invoices a gym raises for its members.
 `PlatformCharge` rows are append-only: a failed attempt stays as a failed row, so
 both dunning and revenue can be explained after the fact.
