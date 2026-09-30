@@ -79,6 +79,44 @@ export class PlatformCharge {
   @Prop({ type: String, default: null, index: true })
   providerRef: string | null;
 
+  /** Explicit Razorpay ids so order + payment both survive settlement. */
+  @Prop({ type: String, default: null, index: true })
+  razorpayOrderId: string | null;
+
+  @Prop({ type: String, default: null, index: true })
+  razorpayPaymentId: string | null;
+
+  /** Checkout.js HMAC we verified (one-time). */
+  @Prop({ type: String, default: null })
+  razorpaySignature: string | null;
+
+  /** one_time | autopay */
+  @Prop({ type: String, default: null })
+  payMode: string | null;
+
+  /** upi | card | netbanking | wallet | … */
+  @Prop({ type: String, default: null })
+  paymentMethod: string | null;
+
+  @Prop({ type: String, default: null })
+  razorpayCustomerId: string | null;
+
+  @Prop({ type: String, default: null })
+  payerEmail: string | null;
+
+  @Prop({ type: String, default: null })
+  payerContact: string | null;
+
+  /** UPI VPA / last4 / bank — whatever Razorpay returns for the method. */
+  @Prop({ type: String, default: null })
+  paymentInstrument: string | null;
+
+  @Prop({ type: Number, default: null })
+  amountPaise: number | null;
+
+  @Prop({ type: String, default: null })
+  providerStatus: string | null;
+
   @Prop({ type: String, default: null })
   failureReason: string | null;
 

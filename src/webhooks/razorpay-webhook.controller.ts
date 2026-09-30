@@ -131,12 +131,18 @@ export class RazorpayWebhookController {
         companyId: String(notes.companyId || companyId),
         paymentId: paymentEntity?.id || `token_${tokenEntity?.id}`,
         chargeId: notes.chargeId || null,
+        orderId:
+          paymentEntity?.order_id ||
+          orderEntity?.id ||
+          linkEntity?.order_id ||
+          null,
         tokenId: paymentEntity?.token_id || tokenEntity?.id || null,
         customerId:
           paymentEntity?.customer_id || tokenEntity?.customer_id || null,
         succeeded,
         reason:
           paymentEntity?.error_description || (failed ? event : undefined),
+        payMode: notes.payMode || null,
       });
       return { ...result, handled: 'platform_billing' };
     }

@@ -55,6 +55,27 @@ class CancelDto {
   reason?: string;
 }
 
+class StartBillingDto {
+  @IsOptional()
+  @IsIn(['one_time', 'autopay'])
+  mode?: 'one_time' | 'autopay';
+}
+
+class VerifyCheckoutDto {
+  @IsString()
+  orderId!: string;
+
+  @IsString()
+  paymentId!: string;
+
+  @IsString()
+  signature!: string;
+
+  @IsOptional()
+  @IsString()
+  chargeId?: string;
+}
+
 class CustomInquiryDto {
   @IsString()
   @MaxLength(120)
@@ -265,14 +286,29 @@ export class PlatformBillingController {
   }
 
   /**
-   * Starts the UPI Autopay mandate for our fees. The returned link is what the
-   * gym owner approves; the first period is charged in the same step.
+   * Start collecting our fee. Body.mode:
+   * - one_time → pay this period once (payment link)
+   * - autopay  → UPI Autopay mandate (first debit + token)
    */
   @Post('mandate')
   @RequirePermissions(Permission.SETTINGS_UPDATE)
   @HttpCode(HttpStatus.OK)
-  startMandate(@CompanyId() companyId: string) {
-    return this.charging.startMandate(companyId);
+  startMandate(
+    @CompanyId() companyId: string,
+    @Body() body: StartBillingDto,
+  ) {
+    return this.charging.startBilling(companyId, body?.mode || 'one_time');
+  }
+
+  /** Checkout.js success — verify HMAC and activate the paid period. */
+  @Post('verify-checkout')
+  @RequirePermissions(Permission.SETTINGS_UPDATE)
+  @HttpCode(HttpStatus.OK)
+  verifyCheckout(
+    @CompanyId() companyId: string,
+    @Body() body: VerifyCheckoutDto,
+  ) {
+    return this.charging.verifyCheckoutPayment(companyId, body);
   }
 
   @Post('cancel')
@@ -318,6 +354,13 @@ export class PlatformAdminController {
     @Query('q') q?: string,
   ) {
     return this.billing.listCompanies(status, q);
+  }
+
+  /** Gym's platform fee invoices — SUPER_ADMIN view / download. */
+  @Get('companies/:companyId/invoices')
+  @HttpCode(HttpStatus.OK)
+  companyInvoices(@Param('companyId') companyId: string) {
+    return this.billing.charges(companyId);
   }
 
   /** Extend / revive a gym trial. */

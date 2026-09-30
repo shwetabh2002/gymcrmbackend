@@ -482,6 +482,111 @@ export class RazorpayApiService {
     }
   }
 
+  // ───────────────────────── One-time order (Checkout modal) ─────────────────────────
+
+  async createOrder(
+    creds: RazorpayCredentials,
+    input: {
+      amountPaise: number;
+      currency?: string;
+      receipt: string;
+      notes?: Record<string, string>;
+    },
+  ): Promise<{ orderId: string; amountPaise: number; currency: string }> {
+    this.assertLive(creds);
+    const currency = input.currency || this.defaultCurrency();
+    const data = await this.call<any>(creds, 'POST', RAZORPAY_PATHS.orders, {
+      amount: input.amountPaise,
+      currency,
+      payment_capture: true,
+      receipt: input.receipt,
+      notes: input.notes || {},
+    });
+    return {
+      orderId: data.id,
+      amountPaise: input.amountPaise,
+      currency,
+    };
+  }
+
+  async fetchPayment(
+    creds: RazorpayCredentials,
+    paymentId: string,
+  ): Promise<{
+    paymentId: string;
+    orderId: string | null;
+    status: string | null;
+    method: string | null;
+    amountPaise: number | null;
+    currency: string | null;
+    email: string | null;
+    contact: string | null;
+    customerId: string | null;
+    tokenId: string | null;
+    instrument: string | null;
+    notes: Record<string, string>;
+    capturedAt: Date | null;
+    errorDescription: string | null;
+  } | null> {
+    if (!paymentId) return null;
+    this.assertLive(creds);
+    try {
+      const data = await this.call<any>(
+        creds,
+        'GET',
+        RAZORPAY_PATHS.payment(paymentId),
+      );
+      const instrument =
+        data.vpa ||
+        data.bank ||
+        data.wallet ||
+        (data.card?.last4 ? `card_****${data.card.last4}` : null) ||
+        null;
+      return {
+        paymentId: data.id,
+        orderId: data.order_id || null,
+        status: data.status || null,
+        method: data.method || null,
+        amountPaise:
+          typeof data.amount === 'number' ? data.amount : null,
+        currency: data.currency || null,
+        email: data.email || null,
+        contact: data.contact || null,
+        customerId: data.customer_id || null,
+        tokenId: data.token_id || null,
+        instrument,
+        notes: (data.notes && typeof data.notes === 'object'
+          ? data.notes
+          : {}) as Record<string, string>,
+        capturedAt: data.captured_at
+          ? new Date(Number(data.captured_at) * 1000)
+          : null,
+        errorDescription: data.error_description || null,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  /** Checkout.js success callback signature: order_id|payment_id */
+  verifyCheckoutSignature(
+    orderId: string,
+    paymentId: string,
+    signature: string,
+    keySecret: string,
+  ): boolean {
+    if (!orderId || !paymentId || !signature || !keySecret) return false;
+    const expected = createHmac('sha256', keySecret)
+      .update(`${orderId}|${paymentId}`)
+      .digest('hex');
+    if (expected.length !== signature.length) return false;
+    let diff = 0;
+    for (let i = 0; i < expected.length; i += 1) {
+      diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+    }
+    return diff === 0;
+  }
+
   // ───────────────────────── Webhooks ─────────────────────────
 
   verifyWebhookSignature(

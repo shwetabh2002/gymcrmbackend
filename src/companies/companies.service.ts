@@ -117,6 +117,7 @@ export class CompaniesService {
       accountStatus: AccountStatus.ACTIVE,
       companyId: company._id,
       activeCompanyId: null,
+      phone: dto.phone?.trim() || null,
     });
 
     company.ownerUserId = admin._id as any;

@@ -53,11 +53,16 @@ export type BillingSnapshot = {
   /** Null once the trial is over. */
   trialEndsAt: Date | null;
   trialDaysLeft: number | null;
+  currentPeriodStart: Date | null;
   currentPeriodEnd: Date | null;
   branches: number;
   pricePerBranch: number;
   /** What the next charge will be, at today's branch count. */
   nextAmount: number;
+  lastAmount: number | null;
+  lastChargeAt: Date | null;
+  /** How fees are collected — one-time Checkout vs Autopay mandate. */
+  billingMode: 'ONE_TIME' | 'AUTOPAY' | null;
   features: PlatformFeature[];
   maxBranches: number | null;
   maxMembers: number | null;
@@ -212,6 +217,7 @@ export class PlatformBillingService {
       currency: sub.currency,
       trialEndsAt: sub.trialEndsAt,
       trialDaysLeft,
+      currentPeriodStart: sub.currentPeriodStart,
       currentPeriodEnd: sub.currentPeriodEnd,
       branches,
       pricePerBranch: sub.pricePerBranch,
@@ -220,12 +226,21 @@ export class PlatformBillingService {
         branches,
         interval: sub.interval,
       }),
+      lastAmount: sub.lastAmount ?? null,
+      lastChargeAt: sub.lastChargeAt ?? null,
+      billingMode:
+        sub.billingMode ||
+        (sub.mandateTokenId ? 'AUTOPAY' : sub.status === 'ACTIVE' ? 'ONE_TIME' : null),
       features,
       maxBranches: plan?.maxBranches ?? null,
       maxMembers: plan?.maxMembers ?? null,
       canWrite: canWrite(sub.status, sub.trialEndsAt),
       mandateApproved: !!sub.mandateTokenId,
-      mandateShareUrl: sub.mandateShareUrl,
+      // Only surface a pending Autopay link — never leftover one-time plinks.
+      mandateShareUrl:
+        sub.mandateTokenId || sub.billingMode === 'ONE_TIME'
+          ? null
+          : sub.mandateShareUrl,
       lastFailureReason: sub.lastFailureReason,
       cancelledAt: sub.cancelledAt,
     };
@@ -246,18 +261,35 @@ export class PlatformBillingService {
   }
 
   async charges(companyId: string, limit = 24) {
-    const rows = await this.chargeModel
-      .find({ companyId })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean()
-      .exec();
+    const [rows, company, owner] = await Promise.all([
+      this.chargeModel
+        .find({ companyId })
+        .sort({ createdAt: -1 })
+        .limit(limit)
+        .lean()
+        .exec(),
+      this.companyModel.findById(companyId).select('name phone city').lean().exec(),
+      this.userModel
+        .findOne({ companyId, role: 'ADMIN' })
+        .select('name email phone')
+        .lean()
+        .exec(),
+    ]);
+
+    const billTo = {
+      name: (company as any)?.name || 'Gym',
+      email: (owner as any)?.email || null,
+      phone: (owner as any)?.phone || (company as any)?.phone || null,
+      city: (company as any)?.city || null,
+    };
+
     return rows.map((c) => ({
       id: String(c._id),
       invoiceNumber: c.invoiceNumber,
       planCode: c.planCode,
       branches: c.branches,
       subtotal: c.subtotal,
+      taxPercentage: c.taxPercentage ?? 0,
       taxAmount: c.taxAmount,
       totalAmount: c.totalAmount,
       currency: c.currency,
@@ -267,6 +299,13 @@ export class PlatformBillingService {
       paidAt: c.paidAt,
       failureReason: c.failureReason,
       createdAt: (c as any).createdAt,
+      razorpayOrderId: c.razorpayOrderId ?? null,
+      razorpayPaymentId: c.razorpayPaymentId ?? c.providerRef ?? null,
+      paymentMethod: c.paymentMethod ?? null,
+      paymentInstrument: c.paymentInstrument ?? null,
+      payMode: c.payMode ?? null,
+      providerStatus: c.providerStatus ?? null,
+      billTo,
     }));
   }
 
@@ -350,6 +389,7 @@ export class PlatformBillingService {
     input: { tokenId: string; customerId?: string | null },
   ) {
     const sub = await this.getSubscription(companyId);
+    sub.billingMode = 'AUTOPAY';
     sub.mandateTokenId = input.tokenId;
     sub.mandateCustomerId = input.customerId || null;
     sub.mandateApprovedAt = new Date();
@@ -372,9 +412,31 @@ export class PlatformBillingService {
     input: { authLinkId: string; shareUrl: string; customerId?: string | null },
   ) {
     const sub = await this.getSubscription(companyId);
+    // Pending Autopay setup only — never overwrite an active one-time period.
+    if (!sub.mandateTokenId) {
+      sub.billingMode = null;
+    }
     sub.mandateAuthLinkId = input.authLinkId;
     sub.mandateShareUrl = input.shareUrl;
     if (input.customerId) sub.mandateCustomerId = input.customerId;
+    await sub.save();
+    return sub;
+  }
+
+  /**
+   * One-time Checkout paid — drop any leftover Payment Link / mandate registration
+   * fields so the doc does not look like an incomplete Autopay setup.
+   */
+  async markOneTimeBilling(companyId: string) {
+    const sub = await this.getSubscription(companyId);
+    if (sub.mandateTokenId) return sub;
+    sub.billingMode = 'ONE_TIME';
+    sub.mandateAuthLinkId = null;
+    sub.mandateShareUrl = null;
+    // Customer id from an old plink is not a mandate — clear it too.
+    if (!sub.mandateApprovedAt) {
+      sub.mandateCustomerId = null;
+    }
     await sub.save();
     return sub;
   }
@@ -418,11 +480,57 @@ export class PlatformBillingService {
     sub: PlatformSubscriptionDocument,
     charge: PlatformChargeDocument,
     providerRef: string,
+    meta?: {
+      orderId?: string | null;
+      paymentId?: string | null;
+      signature?: string | null;
+      payMode?: string | null;
+      method?: string | null;
+      customerId?: string | null;
+      email?: string | null;
+      contact?: string | null;
+      instrument?: string | null;
+      amountPaise?: number | null;
+      providerStatus?: string | null;
+      paidAt?: Date | null;
+    },
   ) {
     charge.status = 'PAID';
     charge.providerRef = providerRef;
-    charge.paidAt = new Date();
+    charge.paidAt = meta?.paidAt || new Date();
+    if (meta?.orderId) charge.razorpayOrderId = meta.orderId;
+    if (meta?.paymentId) charge.razorpayPaymentId = meta.paymentId;
+    else if (providerRef?.startsWith('pay_')) {
+      charge.razorpayPaymentId = providerRef;
+    }
+    if (meta?.signature) charge.razorpaySignature = meta.signature;
+    if (meta?.payMode) charge.payMode = meta.payMode;
+    if (meta?.method) charge.paymentMethod = meta.method;
+    if (meta?.customerId) charge.razorpayCustomerId = meta.customerId;
+    if (meta?.email) charge.payerEmail = meta.email;
+    if (meta?.contact) charge.payerContact = meta.contact;
+    if (meta?.instrument) charge.paymentInstrument = meta.instrument;
+    if (meta?.amountPaise != null) charge.amountPaise = meta.amountPaise;
+    if (meta?.providerStatus) charge.providerStatus = meta.providerStatus;
     await charge.save();
+
+    // Drop superseded checkout attempts so history doesn't look unpaid.
+    await this.chargeModel
+      .updateMany(
+        {
+          companyId: sub.companyId,
+          _id: { $ne: charge._id },
+          status: 'PENDING',
+        },
+        {
+          $set: {
+            status: 'FAILED',
+            failureReason: 'Superseded by a completed payment',
+          },
+        },
+      )
+      .exec()
+      .catch(() => undefined);
 
     sub.status = 'ACTIVE';
     sub.currentPeriodStart = charge.periodStart;
@@ -434,6 +542,17 @@ export class PlatformBillingService {
     sub.dunningAttempts = 0;
     sub.nextRetryAt = null;
     sub.trialEndsAt = null;
+    // One-time pay: keep the doc as period billing, not a half-finished mandate.
+    if (!sub.mandateTokenId) {
+      sub.billingMode = 'ONE_TIME';
+      sub.mandateAuthLinkId = null;
+      sub.mandateShareUrl = null;
+      if (!sub.mandateApprovedAt) {
+        sub.mandateCustomerId = null;
+      }
+    } else if (!sub.billingMode) {
+      sub.billingMode = 'AUTOPAY';
+    }
     await sub.save();
 
     await this.syncCompanyStatus(String(sub.companyId), 'ACTIVE');
@@ -794,6 +913,24 @@ export class PlatformBillingService {
   }
 
   async findChargeByProviderRef(providerRef: string) {
-    return this.chargeModel.findOne({ providerRef }).exec();
+    if (!providerRef) return null;
+    return this.chargeModel
+      .findOne({
+        $or: [
+          { providerRef },
+          { razorpayPaymentId: providerRef },
+          { razorpayOrderId: providerRef },
+        ],
+      })
+      .exec();
+  }
+
+  async findChargeByOrderId(orderId: string) {
+    if (!orderId) return null;
+    return this.chargeModel
+      .findOne({
+        $or: [{ razorpayOrderId: orderId }, { providerRef: orderId }],
+      })
+      .exec();
   }
 }

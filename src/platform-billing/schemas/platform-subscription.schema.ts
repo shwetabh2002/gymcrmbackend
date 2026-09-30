@@ -76,8 +76,16 @@ export class PlatformSubscription {
   lastAmount: number;
 
   /**
-   * The gym's UPI Autopay mandate for *our* fees, taken at signup. The same
-   * machinery the gyms use on their own members.
+   * How this gym pays platform fees.
+   * ONE_TIME = Checkout each period; AUTOPAY = UPI mandate + recurring debit.
+   * Null while still on trial / unpaid.
+   */
+  @Prop({ type: String, enum: ['ONE_TIME', 'AUTOPAY'], default: null })
+  billingMode: 'ONE_TIME' | 'AUTOPAY' | null;
+
+  /**
+   * Autopay only — token after the gym approves a UPI mandate for our fees.
+   * Left null for one-time billing.
    */
   @Prop({ type: String, default: null })
   mandateTokenId: string | null;
@@ -88,7 +96,7 @@ export class PlatformSubscription {
   @Prop({ type: Date, default: null })
   mandateApprovedAt: Date | null;
 
-  /** Registration link while the mandate is still pending approval. */
+  /** Autopay only — registration link while the mandate is still pending. */
   @Prop({ type: String, default: null })
   mandateAuthLinkId: string | null;
 

@@ -18,6 +18,7 @@ export const RAZORPAY_PATHS = {
   customers: '/customers',
   paymentLinks: '/payment_links',
   orders: '/orders',
+  payment: (paymentId: string) => `/payments/${paymentId}`,
   recurringPayment: '/payments/create/recurring',
   /** Mandate registration ("authorization transaction") link. */
   authLinks: '/subscription_registration/auth_links',
