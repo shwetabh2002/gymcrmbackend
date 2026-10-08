@@ -1,6 +1,7 @@
 /**
  * Supported launch countries — add a row here to open a new market.
  * company.countryCode references these codes.
+ * Currency is always derived from country (not a free-form field).
  */
 export type CountryConfig = {
   code: string; // ISO 3166-1 alpha-2
@@ -20,46 +21,46 @@ export const COUNTRIES: CountryConfig[] = [
     locale: 'en-IN',
     phoneDialCode: '+91',
   },
-  // {
-  //   code: 'AE',
-  //   name: 'United Arab Emirates',
-  //   currency: 'AED',
-  //   currencySymbol: 'AED',
-  //   locale: 'en-AE',
-  //   phoneDialCode: '+971',
-  // },
-  // {
-  //   code: 'US',
-  //   name: 'United States',
-  //   currency: 'USD',
-  //   currencySymbol: '$',
-  //   locale: 'en-US',
-  //   phoneDialCode: '+1',
-  // },
-  // {
-  //   code: 'GB',
-  //   name: 'United Kingdom',
-  //   currency: 'GBP',
-  //   currencySymbol: '£',
-  //   locale: 'en-GB',
-  //   phoneDialCode: '+44',
-  // },
-  // {
-  //   code: 'SG',
-  //   name: 'Singapore',
-  //   currency: 'SGD',
-  //   currencySymbol: 'S$',
-  //   locale: 'en-SG',
-  //   phoneDialCode: '+65',
-  // },
-  // {
-  //   code: 'AU',
-  //   name: 'Australia',
-  //   currency: 'AUD',
-  //   currencySymbol: 'A$',
-  //   locale: 'en-AU',
-  //   phoneDialCode: '+61',
-  // },
+  {
+    code: 'AE',
+    name: 'United Arab Emirates',
+    currency: 'AED',
+    currencySymbol: 'AED',
+    locale: 'en-AE',
+    phoneDialCode: '+971',
+  },
+  {
+    code: 'US',
+    name: 'United States',
+    currency: 'USD',
+    currencySymbol: '$',
+    locale: 'en-US',
+    phoneDialCode: '+1',
+  },
+  {
+    code: 'GB',
+    name: 'United Kingdom',
+    currency: 'GBP',
+    currencySymbol: '£',
+    locale: 'en-GB',
+    phoneDialCode: '+44',
+  },
+  {
+    code: 'SG',
+    name: 'Singapore',
+    currency: 'SGD',
+    currencySymbol: 'S$',
+    locale: 'en-SG',
+    phoneDialCode: '+65',
+  },
+  {
+    code: 'AU',
+    name: 'Australia',
+    currency: 'AUD',
+    currencySymbol: 'A$',
+    locale: 'en-AU',
+    phoneDialCode: '+61',
+  },
 ];
 
 export const DEFAULT_COUNTRY_CODE = 'IN';

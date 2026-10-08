@@ -120,6 +120,8 @@ export class GymSettingsService {
       currency: country.currency,
       currencySymbol: country.currencySymbol,
       locale: country.locale,
+      /** Gym admins cannot change; SUPER_ADMIN can via PATCH /companies/:id/country */
+      countryLocked: (company as any)?.countryLocked !== false,
       upload,
       updatedAt: doc.updatedAt,
       createdAt: doc.createdAt,
@@ -442,12 +444,17 @@ export class GymSettingsService {
         .exec();
     }
     if (dto.countryCode !== undefined) {
+      if (actorRole !== Role.SUPER_ADMIN) {
+        throw new ForbiddenException(
+          'Country and currency are locked for this gym. Contact platform support to change them.',
+        );
+      }
       await this.companyModel
         .findByIdAndUpdate(cid, {
           countryCode: normalizeCountryCode(dto.countryCode),
+          countryLocked: true,
         })
         .exec();
-      // Currency + phone formatting are cached per company — refresh them.
       this.companyContext.invalidate(companyId);
     }
 

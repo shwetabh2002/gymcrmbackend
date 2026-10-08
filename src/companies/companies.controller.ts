@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   HttpCode,
@@ -13,6 +14,7 @@ import { SIGNUP_THROTTLE } from '../config/throttle.config';
 import { CompaniesService } from './companies.service';
 import { SelfSignupDto } from './dto/self-signup.dto';
 import { ManualOnboardDto } from './dto/manual-onboard.dto';
+import { UpdateCountryDto } from './dto/update-country.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -74,5 +76,14 @@ export class CompaniesController {
   @HttpCode(HttpStatus.OK)
   findById(@Param('id') id: string) {
     return this.companiesService.findById(id);
+  }
+
+  /** SUPER_ADMIN — change a gym's locked country/currency after support request */
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPER_ADMIN)
+  @Patch(':id/country')
+  @HttpCode(HttpStatus.OK)
+  updateCountry(@Param('id') id: string, @Body() dto: UpdateCountryDto) {
+    return this.companiesService.updateCountry(id, dto.countryCode);
   }
 }

@@ -101,6 +101,7 @@ export class CompaniesService {
       phone: dto.phone?.trim() || null,
       city: dto.city?.trim() || null,
       countryCode,
+      countryLocked: true,
       memberIdPrefix: prefix,
       source,
       status,
@@ -258,6 +259,8 @@ export class CompaniesService {
         countryCode: country.code,
         countryName: country.name,
         currency: country.currency,
+        currencySymbol: country.currencySymbol,
+        countryLocked: c.countryLocked !== false,
         memberIdPrefix: c.memberIdPrefix,
         ownerUserId: c.ownerUserId ? String(c.ownerUserId) : null,
         createdAt: c.createdAt,
@@ -280,18 +283,21 @@ export class CompaniesService {
       countryCode: country.code,
       countryName: country.name,
       currency: country.currency,
+      currencySymbol: country.currencySymbol,
+      countryLocked: (c as any).countryLocked !== false,
       memberIdPrefix: c.memberIdPrefix,
       ownerUserId: c.ownerUserId ? String(c.ownerUserId) : null,
       createdAt: (c as any).createdAt,
     };
   }
 
+  /** SUPER_ADMIN only — gym admins cannot change country/currency once locked. */
   async updateCountry(companyId: string, countryCode: string) {
     const code = normalizeCountryCode(countryCode);
     const company = await this.companyModel
       .findByIdAndUpdate(
         companyId,
-        { countryCode: code },
+        { countryCode: code, countryLocked: true },
         {
           returnDocument: 'after',
         },

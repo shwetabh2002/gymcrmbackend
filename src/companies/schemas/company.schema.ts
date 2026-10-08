@@ -38,6 +38,13 @@ export class Company {
   @Prop({ type: String, default: 'IN', uppercase: true, trim: true, index: true })
   countryCode: string;
 
+  /**
+   * Once set (signup / onboard), gym admins cannot change country/currency.
+   * Only SUPER_ADMIN can change via companies API.
+   */
+  @Prop({ type: Boolean, default: true })
+  countryLocked: boolean;
+
   @Prop({ type: String, default: 'GYM', trim: true })
   memberIdPrefix: string;
 
