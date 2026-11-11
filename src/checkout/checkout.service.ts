@@ -195,8 +195,31 @@ export class CheckoutService {
         );
 
     const settings = await this.gymSettings.get(companyId);
-    const companyAutopayOn = settings.autopayEnabled === true;
-    const enableAutopay = companyAutopayOn && dto.enableAutopay !== false;
+    const razorpayEntitled =
+      settings.razorpayEntitled === true ||
+      settings.featureRazorpayUnlocked === true ||
+      settings.autopayEntitled === true ||
+      settings.featureAutopayUnlocked === true;
+    if (!razorpayEntitled) {
+      throw new BadRequestException(
+        'Razorpay checkout is locked for this gym — ask platform admin to unlock it',
+      );
+    }
+
+    const companyAutopayOn =
+      settings.autopayEnabled === true &&
+      (settings.autopayEntitled === true ||
+        settings.featureAutopayUnlocked === true);
+    const wantsAutopay = dto.enableAutopay === true;
+    if (wantsAutopay && !companyAutopayOn) {
+      throw new BadRequestException(
+        'UPI Autopay is turned OFF for this gym — turn it ON in Payment settings or choose one-time payment',
+      );
+    }
+    const enableAutopay = wantsAutopay && companyAutopayOn;
+
+    // Verify live Razorpay connection before allocating a member ID or creating a draft row.
+    await this.paymentProvider.getCredentials(companyId);
 
     const idNo = await this.counters.nextMemberId(
       settings.memberIdPrefix || 'GYM',

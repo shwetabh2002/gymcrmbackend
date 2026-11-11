@@ -29,7 +29,6 @@ import {
   RAZORPAY_OAUTH_SCOPES,
   RAZORPAY_OAUTH_STATE_TTL_MS,
   RAZORPAY_TOKEN_REFRESH_LEEWAY_MS,
-  RAZORPAY_WEBHOOK_EVENTS,
 } from '../config/razorpay.config';
 import { PlatformBillingService } from '../platform-billing/platform-billing.service';
 import {
@@ -76,13 +75,10 @@ export class PaymentProviderService {
   async getStatus(companyId: string) {
     const acc = await this.accountModel.findOne({ companyId }).exec();
     const partnerConfigured = this.razorpay.isPartnerConfigured();
-    /** Same for every gym — what they paste into the Razorpay dashboard. */
     const shared = {
       partnerOAuthAvailable: partnerConfigured,
       mockAvailable: false,
       environment: this.runtime.nodeEnv,
-      webhookUrl: this.runtime.razorpayWebhookUrl(),
-      webhookEvents: RAZORPAY_WEBHOOK_EVENTS,
     };
 
     if (!acc) {
@@ -93,12 +89,13 @@ export class PaymentProviderService {
         accountName: null,
         razorpayAccountId: null,
         connectedAt: null,
-        webhookSecretSet: false,
         mandateCapable: false,
         ...shared,
       };
     }
-    const connected = acc.status === PaymentProviderAccountStatus.CONNECTED;
+    const connected =
+      acc.status === PaymentProviderAccountStatus.CONNECTED &&
+      acc.authMode === PaymentProviderAuthMode.OAUTH;
     return {
       connected,
       status: acc.status,
@@ -106,41 +103,17 @@ export class PaymentProviderService {
       accountName: acc.accountName,
       razorpayAccountId: acc.razorpayAccountId,
       connectedAt: acc.connectedAt,
-      /** Gym-specific secret; falls back to the platform env secret. */
-      webhookSecretSet: !!acc.webhookSecretEnc,
-      /**
-       * OAuth gyms are covered by the partner-level webhook, so they never need
-       * to touch their own dashboard. API-key gyms must register one themselves.
-       */
-      webhookOwnedByPlatform: acc.authMode === PaymentProviderAuthMode.OAUTH,
-      /** Real UPI Autopay mandates need live OAuth or API-key credentials. */
-      mandateCapable:
-        connected && acc.authMode !== PaymentProviderAuthMode.MOCK,
+      /** Real UPI Autopay mandates use live Partner OAuth credentials. */
+      mandateCapable: connected,
       ...shared,
     };
-  }
-
-  /**
-   * Per-gym webhook secret. Each gym pastes the same URL into its own Razorpay
-   * dashboard, so each one gets its own signing secret.
-   */
-  async setWebhookSecret(companyId: string, secret: string) {
-    await this.assertRazorpayUnlocked(companyId);
-    const trimmed = (secret || '').trim();
-    const acc = await this.accountModel.findOne({ companyId }).exec();
-    if (!acc) {
-      throw new BadRequestException('Connect Razorpay first');
-    }
-    acc.webhookSecretEnc = trimmed ? this.encryption.encrypt(trimmed) : null;
-    await acc.save();
-    return this.getStatus(companyId);
   }
 
   async startOAuth(companyId: string, userId: string) {
     await this.assertRazorpayUnlocked(companyId);
     if (!this.razorpay.isPartnerConfigured()) {
       throw new BadRequestException(
-        'Razorpay Partner OAuth is not configured. Set RAZORPAY_PARTNER_CLIENT_ID/SECRET or connect via API keys.',
+        'Razorpay one-click connect is not configured on the platform yet. Contact platform support.',
       );
     }
     const state = this.razorpay.newOAuthState();
@@ -151,6 +124,11 @@ export class PaymentProviderService {
       expiresAt: new Date(Date.now() + RAZORPAY_OAUTH_STATE_TTL_MS),
     });
     return { authorizeUrl: this.razorpay.buildAuthorizeUrl(state), state };
+  }
+
+  async discardOAuthState(state?: string) {
+    if (!state) return;
+    await this.oauthStateModel.deleteOne({ state }).exec().catch(() => null);
   }
 
   async handleOAuthCallback(code: string, state: string) {
@@ -180,6 +158,7 @@ export class PaymentProviderService {
           ? this.encryption.encrypt(tokens.refresh_token)
           : null,
         keyIdEnc: null,
+        webhookSecretEnc: null,
         expiresAt,
         scopes: [...RAZORPAY_OAUTH_SCOPES],
         connectedAt: new Date(),
@@ -199,41 +178,9 @@ export class PaymentProviderService {
     return { companyId: String(pending.companyId), ok: true };
   }
 
-  async connectApiKeys(
-    companyId: string,
-    userId: string,
-    keyId: string,
-    keySecret: string,
-    accountName?: string,
-  ) {
-    await this.assertRazorpayUnlocked(companyId);
-    if (!keyId?.trim() || !keySecret?.trim()) {
-      throw new BadRequestException('keyId and keySecret are required');
-    }
-    await this.accountModel.findOneAndUpdate(
-      { companyId },
-      {
-        companyId: new Types.ObjectId(companyId),
-        provider: PaymentProvider.RAZORPAY,
-        status: PaymentProviderAccountStatus.CONNECTED,
-        authMode: PaymentProviderAuthMode.API_KEYS,
-        razorpayAccountId: keyId.trim(),
-        accountName: accountName?.trim() || keyId.trim(),
-        accessTokenEnc: this.encryption.encrypt(keySecret.trim()),
-        keyIdEnc: this.encryption.encrypt(keyId.trim()),
-        refreshTokenEnc: null,
-        expiresAt: null,
-        connectedAt: new Date(),
-        connectedByUserId: new Types.ObjectId(userId),
-      },
-      { upsert: true, returnDocument: 'after' },
-    );
-    return this.getStatus(companyId);
-  }
-
   async connectMock(companyId: string, userId: string) {
     throw new BadRequestException(
-      'Mock Razorpay is disabled — connect OAuth or API keys for live payments',
+      'Mock Razorpay is disabled — connect Razorpay via OAuth',
     );
   }
 
@@ -244,6 +191,7 @@ export class PaymentProviderService {
     acc.accessTokenEnc = null;
     acc.refreshTokenEnc = null;
     acc.keyIdEnc = null;
+    acc.webhookSecretEnc = null;
     await acc.save();
     return { ok: true };
   }
@@ -267,9 +215,13 @@ export class PaymentProviderService {
     companyId: string,
   ): Promise<PaymentProviderAccountDocument> {
     const acc = await this.accountModel.findOne({ companyId }).exec();
-    if (!acc || acc.status !== PaymentProviderAccountStatus.CONNECTED) {
+    if (
+      !acc ||
+      acc.status !== PaymentProviderAccountStatus.CONNECTED ||
+      acc.authMode !== PaymentProviderAuthMode.OAUTH
+    ) {
       throw new BadRequestException(
-        'Connect Razorpay in Gym Settings before using Online / UPI Autopay',
+        'Connect Razorpay in Payment Settings before using Online / UPI Autopay',
       );
     }
     return acc;
@@ -277,23 +229,8 @@ export class PaymentProviderService {
 
   async getCredentials(companyId: string): Promise<RazorpayCredentials> {
     const acc = await this.requireConnected(companyId);
-    if (acc.authMode === PaymentProviderAuthMode.MOCK) {
-      throw new BadRequestException(
-        'This gym still has a Mock Razorpay connection — disconnect and connect live OAuth or API keys',
-      );
-    }
-    if (acc.authMode === PaymentProviderAuthMode.API_KEYS) {
-      if (!acc.keyIdEnc || !acc.accessTokenEnc) {
-        throw new BadRequestException('Razorpay API keys incomplete');
-      }
-      return {
-        mode: 'api_keys',
-        keyId: this.encryption.decrypt(acc.keyIdEnc),
-        keySecret: this.encryption.decrypt(acc.accessTokenEnc),
-      };
-    }
     if (!acc.accessTokenEnc) {
-      throw new BadRequestException('Razorpay OAuth token missing');
+      throw new BadRequestException('Razorpay OAuth token missing — reconnect');
     }
     // Refresh if expired
     if (
@@ -350,41 +287,16 @@ export class PaymentProviderService {
   }
 
   /**
-   * Signing secret to verify an incoming webhook with. Prefers the gym's own
-   * secret, falls back to the platform-wide env secret. Never falls back to an
-   * unrelated secret in production — a missing secret means "reject".
+   * Signing secret to verify an incoming webhook with — owned centrally by the
+   * platform via Partner OAuth (`RAZORPAY_WEBHOOK_SECRET`). Gyms never manage
+   * webhooks or secrets themselves.
    */
-  async resolveWebhookSecrets(companyId?: string | null): Promise<string[]> {
+  async resolveWebhookSecrets(_companyId?: string | null): Promise<string[]> {
     const secrets: string[] = [];
-
-    if (companyId) {
-      const acc = await this.accountModel
-        .findOne({ companyId })
-        .select('webhookSecretEnc')
-        .exec();
-      if (acc?.webhookSecretEnc) {
-        try {
-          secrets.push(this.encryption.decrypt(acc.webhookSecretEnc));
-        } catch {
-          // corrupt secret — fall through to the env one
-        }
-      }
-    }
-
     const envSecret = (
       this.config.get<string>('RAZORPAY_WEBHOOK_SECRET') || ''
     ).trim();
     if (envSecret) secrets.push(envSecret);
-
-    if (!secrets.length && !this.runtime.isProduction()) {
-      // Dev-only: never fall back to JWT secret (that would couple auth to
-      // payment webhooks). Prefer an explicit RAZORPAY_WEBHOOK_SECRET.
-      const fallback = (
-        this.config.get<string>('RAZORPAY_WEBHOOK_SECRET') || ''
-      ).trim();
-      if (fallback) secrets.push(fallback);
-    }
-
     return secrets;
   }
 

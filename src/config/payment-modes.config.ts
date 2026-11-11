@@ -4,13 +4,19 @@ import { PaymentMode } from '../common/enums/payment-mode.enum';
  * How the front desk collects money when onboarding or renewing a member.
  *
  * This is a *collection* choice, not a ledger field:
- *   CASH    → staff fills the amount they took in hand
- *   ONLINE  → staff fills an online transfer the member already made (UPI/card/
- *             netbanking); a reference can be recorded
- *   AUTOPAY → no manual fill: a mandate registration link goes to the member,
- *             and every later renewal is debited automatically
+ *   CASH            → staff fills the amount they took in hand
+ *   ONLINE          → staff fills an online transfer the member already made
+ *                     (gym's static QR / UPI / card); a reference/proof can be recorded
+ *   RAZORPAY_SINGLE → one-time Razorpay QR / payment link (auto-confirmed, NO mandate)
+ *   AUTOPAY         → recurring UPI Autopay mandate link + QR; every later renewal
+ *                     is debited automatically
  */
-export const COLLECTION_MODES = ['CASH', 'ONLINE', 'AUTOPAY'] as const;
+export const COLLECTION_MODES = [
+  'CASH',
+  'ONLINE',
+  'RAZORPAY_SINGLE',
+  'AUTOPAY',
+] as const;
 export type CollectionMode = (typeof COLLECTION_MODES)[number];
 
 export const DEFAULT_COLLECTION_MODE: CollectionMode = 'CASH';
@@ -38,12 +44,14 @@ export const ACTIVE_PAYMENT_MODES: PaymentMode[] = [
 export const LEDGER_MODE_BY_COLLECTION: Record<CollectionMode, PaymentMode> = {
   CASH: PaymentMode.CASH,
   ONLINE: PaymentMode.ONLINE,
+  RAZORPAY_SINGLE: PaymentMode.ONLINE,
   AUTOPAY: PaymentMode.ONLINE,
 };
 
 /** Labels shared with the CRM so both sides name things identically. */
 export const COLLECTION_MODE_LABELS: Record<CollectionMode, string> = {
   CASH: 'Cash',
-  ONLINE: 'Online (manual entry)',
-  AUTOPAY: 'UPI Autopay (mandate)',
+  ONLINE: 'Online — Manual Entry',
+  RAZORPAY_SINGLE: 'Online — Razorpay One-Time (QR / Link)',
+  AUTOPAY: 'UPI Autopay — Recurring Mandate (QR / Link)',
 };

@@ -59,9 +59,17 @@ export class GymSettingsService {
       .lean()
       .exec();
     const country = getCountry((company as any)?.countryCode);
+    const cidStr = String(doc.companyId);
+    const planHasAutopay = await this.billing
+      .hasFeature(cidStr, 'AUTOPAY')
+      .catch(() => false);
+    const autopayEntitled =
+      doc.featureAutopayUnlocked === true || planHasAutopay;
+    const razorpayEntitled =
+      doc.featureRazorpayUnlocked === true || autopayEntitled;
     return {
       _id: String(doc._id),
-      companyId: String(doc.companyId),
+      companyId: cidStr,
       memberIdPrefix: doc.memberIdPrefix,
       gymName: doc.gymName ?? null,
       logoUrl: doc.logoUrl ?? null,
@@ -107,6 +115,8 @@ export class GymSettingsService {
           : 60,
       featureAutopayUnlocked: doc.featureAutopayUnlocked === true,
       featureRazorpayUnlocked: doc.featureRazorpayUnlocked === true,
+      autopayEntitled,
+      razorpayEntitled,
       featureWhatsappUnlocked: doc.featureWhatsappUnlocked === true,
       featureEmailTemplatesUnlocked: doc.featureEmailTemplatesUnlocked === true,
       featureActivityLogsUnlocked: doc.featureActivityLogsUnlocked === true,
@@ -152,9 +162,9 @@ export class GymSettingsService {
       .select('autopayEnabled featureAutopayUnlocked')
       .lean()
       .exec();
-    return (
-      doc?.featureAutopayUnlocked === true && doc?.autopayEnabled === true
-    );
+    if (doc?.autopayEnabled !== true) return false;
+    if (doc?.featureAutopayUnlocked === true) return true;
+    return this.billing.hasFeature(companyId, 'AUTOPAY');
   }
 
   /**
@@ -354,12 +364,10 @@ export class GymSettingsService {
       update.activityLogsEnabled = false;
     }
 
-    // Resolve whether Autopay module will be unlocked after this write
+    // Resolve whether Autopay module will be unlocked/entitled after this write
     const existing = await this.settingsModel
       .findOne({ companyId: cid })
-      .select(
-        'featureAutopayUnlocked autopayEnabled',
-      )
+      .select('featureAutopayUnlocked autopayEnabled')
       .lean()
       .exec();
     const autopayUnlockedAfter =
@@ -368,7 +376,11 @@ export class GymSettingsService {
         : existing?.featureAutopayUnlocked === true;
 
     if (dto.autopayEnabled !== undefined) {
-      if (dto.autopayEnabled === true && !autopayUnlockedAfter) {
+      let entitled = autopayUnlockedAfter;
+      if (!entitled && dto.featureAutopayUnlocked !== false) {
+        entitled = await this.billing.hasFeature(companyId, 'AUTOPAY');
+      }
+      if (dto.autopayEnabled === true && !entitled) {
         throw new ForbiddenException(
           'Autopay is locked for this gym — ask platform admin to unlock it',
         );

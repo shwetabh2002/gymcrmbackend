@@ -226,7 +226,7 @@ export class RazorpayApiService {
   private assertLive(creds: RazorpayCredentials): void {
     if (creds.mode === 'mock') {
       throw new BadRequestException(
-        'Mock Razorpay is disabled — connect live OAuth or API keys',
+        'Mock Razorpay is disabled — connect Razorpay via OAuth',
       );
     }
   }

@@ -6,15 +6,13 @@ How recurring money actually moves, and what each gym must do once.
 
 ## 1. Each gym connects its own Razorpay
 
-`Settings → Payments — Razorpay`. Money settles into the gym's own bank account;
-the platform never holds it. Credentials are encrypted at rest
+`Payment settings → Payments — Razorpay`. Money settles into the gym's own bank
+account; the platform never holds it. OAuth tokens are encrypted at rest
 (`PAYMENT_TOKEN_ENCRYPTION_KEY`) and scoped to that `companyId`.
 
-| Mode | When | Real mandates? | Gym sets up a webhook? |
-|---|---|---|---|
-| Partner OAuth | production, preferred | yes | **no — platform handles it** |
-| Gym's own API keys | until OAuth is approved | yes | yes, in their own dashboard |
-| Mock | development only | no — simulated links | no |
+Gyms connect **exclusively via Razorpay Partner OAuth** (one-click
+"Connect with Razorpay"). Gyms never paste API keys or configure webhooks in
+their Razorpay dashboard — the platform owns the single partner-level webhook.
 
 ### Partner OAuth — one-time platform setup
 
@@ -27,8 +25,8 @@ the platform never holds it. Credentials are encrypted at rest
 4. Put the app's credentials in `RAZORPAY_PARTNER_CLIENT_ID` /
    `RAZORPAY_PARTNER_CLIENT_SECRET`.
 
-The "Connect with Razorpay" button then appears in Settings on its own. A gym
-clicks it, authorises, and is done — no dashboard, no webhook, no secret.
+The "Connect with Razorpay" button in Payment Settings lets a gym click,
+authorise, and be done — no dashboard, no webhook, no secret.
 
 Events for connected accounts arrive on that single endpoint carrying
 `account_id`, which is matched to the gym via the `razorpayAccountId` saved at
@@ -45,17 +43,16 @@ so a local connect binds the gym's **test** account.
 `NODE_ENV=production` blocks the Mock option outright (`mockAvailable: false`,
 and `POST /payment-provider/razorpay/mock` returns 400).
 
-### Webhook — required, not optional
+### Partner webhook — required on the platform app
 
-A mandate approval and every recurring debit are confirmed by webhook. Without
-it a charge stays `pending` forever. The Settings screen shows the exact URL to
-paste into the gym's Razorpay dashboard:
+A mandate approval and every recurring debit are confirmed by the platform's
+partner webhook:
 
 ```
 POST  {BACKEND_PUBLIC_URL}/webhooks/razorpay
 ```
 
-Events to enable:
+Events to enable on the Razorpay Partner app:
 
 ```
 payment_link.paid   payment.captured   payment.authorized   payment.failed
@@ -63,14 +60,8 @@ order.paid          invoice.paid       token.confirmed      token.rejected
 token.paused        token.cancelled
 ```
 
-The gym pastes its signing secret into the same screen
-(`POST /payment-provider/razorpay/webhook-secret`). Verification order:
-
-1. that gym's own secret, else
-2. `RAZORPAY_WEBHOOK_SECRET` (platform-wide), else
-3. **reject** — no unsigned webhooks are accepted.
-
-Webhook signatures are always verified (`RAZORPAY_SKIP_WEBHOOK_VERIFY` is ignored).
+Webhook signatures are always verified against `RAZORPAY_WEBHOOK_SECRET`
+(`RAZORPAY_SKIP_WEBHOOK_VERIFY` is ignored); unsigned webhooks are rejected.
 
 ---
 

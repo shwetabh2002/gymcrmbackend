@@ -8,6 +8,7 @@
 export const CRM_ROUTES = {
   login: 'login',
   settings: 'settings',
+  paymentSettings: 'payment-settings',
   members: 'users',
   renewals: 'renewals',
   billing: 'billing',
